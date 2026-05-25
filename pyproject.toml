@@ -267,6 +267,10 @@ redundant-cast = "ignore"
 
 [tool.ruff]
 preview = true  # required for PLW1514 (unspecified-encoding) — preview rule
+# crm/ is a separate sub-project (mosnin/realestatecrm) with its own
+# pyproject.toml and ruff config (line-length=100, select=[E,F,I,UP]).
+# Don't double-lint it from here — the CRM has its own CI for that.
+extend-exclude = ["crm"]
 
 [tool.ruff.lint]
 # All other lints are intentionally disabled (see comment history on this
