@@ -5,7 +5,7 @@
 # Uses uv for fast Python provisioning and package management.
 #
 # Usage:
-#   iex (irm https://raw.githubusercontent.com/NousResearch/chippi-agent/main/scripts/install.ps1)
+#   iex (irm https://raw.githubusercontent.com/mosnin/chippiagent/main/scripts/install.ps1)
 #
 # Or download and run with options:
 #   .\install.ps1 -NoVenv -SkipSetup
@@ -75,8 +75,8 @@ try {
 # Configuration
 # ============================================================================
 
-$RepoUrlSsh = "git@github.com:NousResearch/chippi-agent.git"
-$RepoUrlHttps = "https://github.com/NousResearch/chippi-agent.git"
+$RepoUrlSsh = "git@github.com:mosnin/chippiagent.git"
+$RepoUrlHttps = "https://github.com/mosnin/chippiagent.git"
 $PythonVersion = "3.11"
 $NodeVersion = "22"
 
@@ -1055,13 +1055,13 @@ function Install-Repository {
                 # for.  GitHub supports archive URLs for commits, tags, and
                 # branches; we honour Commit > Tag > Branch.
                 if ($Commit) {
-                    $zipUrl = "https://github.com/NousResearch/chippi-agent/archive/$Commit.zip"
+                    $zipUrl = "https://github.com/mosnin/chippiagent/archive/$Commit.zip"
                     $zipLabel = $Commit
                 } elseif ($Tag) {
-                    $zipUrl = "https://github.com/NousResearch/chippi-agent/archive/refs/tags/$Tag.zip"
+                    $zipUrl = "https://github.com/mosnin/chippiagent/archive/refs/tags/$Tag.zip"
                     $zipLabel = $Tag
                 } else {
-                    $zipUrl = "https://github.com/NousResearch/chippi-agent/archive/refs/heads/$Branch.zip"
+                    $zipUrl = "https://github.com/mosnin/chippiagent/archive/refs/heads/$Branch.zip"
                     $zipLabel = $Branch
                 }
                 $zipPath = "$env:TEMP\chippi-agent-$zipLabel.zip"
@@ -2364,7 +2364,7 @@ try {
     Write-Err "Installation failed: $_"
     Write-Host ""
     Write-Info "If the error is unclear, try downloading and running the script directly:"
-    Write-Host "  Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/NousResearch/chippi-agent/main/scripts/install.ps1' -OutFile install.ps1" -ForegroundColor Yellow
+    Write-Host "  Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/mosnin/chippiagent/main/scripts/install.ps1' -OutFile install.ps1" -ForegroundColor Yellow
     Write-Host "  .\install.ps1" -ForegroundColor Yellow
     Write-Host ""
 }
