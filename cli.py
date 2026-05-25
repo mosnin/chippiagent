@@ -5117,14 +5117,14 @@ class ChippiCLI:
                     "[dim]   Fix: Set model.context_length in config.yaml, or increase your server's context setting[/]"
                 )
 
-        # Warn if the configured model is a Nous Chippi LLM (not agentic)
-        from chippi_cli.model_switch import is_nous_chippi_non_agentic
+        # Warn if the configured model is a Nous Hermes LLM (not agentic)
+        from chippi_cli.model_switch import is_nous_hermes_non_agentic
 
         model_name = getattr(self, "model", "") or ""
-        if is_nous_chippi_non_agentic(model_name):
+        if is_nous_hermes_non_agentic(model_name):
             self._console_print()
             self._console_print(
-                "[bold yellow]⚠  Nous Research Chippi 3 & 4 models are NOT agentic and are not "
+                "[bold yellow]⚠  Nous Research Hermes 3 & 4 models are NOT agentic and are not "
                 "designed for use with Chippi Agent.[/]"
             )
             self._console_print(
