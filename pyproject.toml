@@ -172,19 +172,23 @@ youtube = [
 # `chippi dashboard` (localhost SPA + API).  Not in core to keep the default install lean.
 web = ["fastapi==0.133.1", "uvicorn[standard]==0.41.0"]
 # CRM sub-agent — the Python deps the realtor CRM's background agent uses
-# (Composio integrations, OpenAI Agents SDK, Postgres, Modal, Upstash, plus
+# (Composio integrations, OpenAI Agents SDK, Postgres, Upstash, plus
 # attachment extraction). These are ADDITIVE on top of the framework's
 # exact-pinned core: the CRM agent is a thin domain layer, not a fork, so
 # version ranges are deliberate to let the CRM track upstream SDK fixes
 # without forcing a framework-wide pin bump. See crm/agent/pyproject.toml
 # for the upstream-of-record pin policy.
+#
+# `modal` is intentionally NOT in this extra — the framework's [modal]
+# extra pins modal==1.3.4 (incompatible with the CRM's modal>=0.73,<1
+# range). When deploying the CRM sub-agent specifically, install from
+# `crm/agent/pyproject.toml` instead of using this extra.
 crm = [
   "composio>=0.13.0,<0.14",
   "composio-openai-agents>=0.13.0,<0.14",
   "openai-agents>=0.0.15,<0.1",
   "asyncpg>=0.30.0,<1",
   "structlog>=25.1.0,<26",
-  "modal>=0.73.0,<1",
   "upstash-redis>=1.3.0,<2",
   "pypdf>=5.0.0,<6",
   "python-docx>=1.1.0,<2",
