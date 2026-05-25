@@ -123,6 +123,14 @@ Then:
 
 The agent ships with Python 3.11, uv, and an `./chippi` launcher that doesn't need you to activate the venv first. For a more end-to-end install (symlinks `~/.local/bin/chippi`, installs `.[all]`), run `./setup-chippi.sh`.
 
+#### Windows (native, PowerShell)
+
+```powershell
+iex (irm https://raw.githubusercontent.com/mosnin/chippiagent/main/scripts/install.ps1)
+```
+
+`scripts/install.ps1` handles uv, Python 3.11, Node.js, ripgrep, ffmpeg, and a portable Git Bash — no admin required. WSL2 also works and uses the Linux one-liner above.
+
 ---
 
 ## Design principles
