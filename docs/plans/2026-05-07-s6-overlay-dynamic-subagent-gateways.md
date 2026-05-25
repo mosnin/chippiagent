@@ -1,25 +1,25 @@
 # s6-overlay Supervision for Per-Profile Gateways in Docker — Implementation Plan
 
 > **Status: shipped.** Phases 0–5 landed via PR
-> [NousResearch/hermes-agent#30136](https://github.com/NousResearch/hermes-agent/pull/30136)
+> [NousResearch/chippi-agent#30136](https://github.com/NousResearch/chippi-agent/pull/30136)
 > in May 2026. This document is preserved as a post-implementation reference
 > for the architecture and the resolved design questions. The phase-by-phase
 > TDD walkthrough (≈2,800 lines) and the v2/v3 re-validation preambles have
 > been removed — the canonical implementation history is the PR commit log
-> (`git log --oneline a957ef083..a6f7171a5 -- 'docker/*' 'hermes_cli/service_manager.py' …`).
+> (`git log --oneline a957ef083..a6f7171a5 -- 'docker/*' 'chippi_cli/service_manager.py' …`).
 > Open Questions are collapsed into a single Decision Log table; full
 > deliberations live in PR review comments.
 
-**Goal:** Replace `tini` with s6-overlay as PID 1 in the Hermes Docker image so
-that the main hermes process, the dashboard, and dynamically-created
+**Goal:** Replace `tini` with s6-overlay as PID 1 in the Chippi Docker image so
+that the main chippi process, the dashboard, and dynamically-created
 per-profile gateways all run as supervised services (auto-restart on crash,
 clean shutdown, signal forwarding, zombie reaping). Preserve every existing
 `docker run …` invocation pattern — including interactive TUI.
 
 **Architecture:** s6-overlay's `/init` is the container ENTRYPOINT, running
-s6-svscan as PID 1. Main hermes and the dashboard are declared as static
+s6-svscan as PID 1. Main chippi and the dashboard are declared as static
 s6-rc services at image build time. Per-profile gateways — which users create
-*after* the image is built (`hermes profile create coder` →
+*after* the image is built (`chippi profile create coder` →
 `coder gateway start`) — are registered dynamically by writing service
 directories under a scandir watched by s6-svscan. A `ServiceManager` protocol
 abstracts the install/start/stop/restart surface across the init systems we
@@ -36,8 +36,8 @@ service registration that only s6 implements.
 - [hadolint](https://github.com/hadolint/hadolint) for the Dockerfile +
   [shellcheck](https://github.com/koalaman/shellcheck) for entrypoint scripts.
 - Python subprocess wrappers for `s6-svc`, `s6-svstat`, `s6-svscanctl`.
-- Existing systemd/launchd/windows surface in `hermes_cli/gateway.py` and
-  `hermes_cli/gateway_windows.py`.
+- Existing systemd/launchd/windows surface in `chippi_cli/gateway.py` and
+  `chippi_cli/gateway_windows.py`.
 
 **Scope:**
 
@@ -46,11 +46,11 @@ service registration that only s6 implements.
 - s6-overlay only (no pure-Python fallback).
 - Architecture A (s6 owns PID 1; tini is removed).
 - Interactive TUI must keep working:
-  `docker run -it --rm nousresearch/hermes-agent:latest --tui`.
+  `docker run -it --rm nousresearch/chippi-agent:latest --tui`.
 - Dynamic registration is limited to per-profile gateways — one service per
   profile, created when a profile is created, torn down when deleted. A
-  `gateway-default` slot is always registered for the root HERMES_HOME
-  profile so `hermes gateway start` (no `-p`) has somewhere to land.
+  `gateway-default` slot is always registered for the root CHIPPI_HOME
+  profile so `chippi gateway start` (no `-p`) has somewhere to land.
 
 **Out of scope:**
 
@@ -76,17 +76,17 @@ service registration that only s6 implements.
 ### Pre-s6 container init (what we replaced)
 
 The original `Dockerfile` declared
-`ENTRYPOINT [ "/usr/bin/tini", "-g", "--", "/opt/hermes/docker/entrypoint.sh" ]`.
+`ENTRYPOINT [ "/usr/bin/tini", "-g", "--", "/opt/chippi/docker/entrypoint.sh" ]`.
 tini was PID 1, reaped zombies, forwarded SIGTERM to the process group. The
 old `docker/entrypoint.sh`:
 
-1. `gosu` privilege drop from root → `hermes` UID.
+1. `gosu` privilege drop from root → `chippi` UID.
 2. Copied `.env.example`, `cli-config.yaml.example`, `SOUL.md` into
-   `$HERMES_HOME` if missing.
+   `$CHIPPI_HOME` if missing.
 3. Synced bundled skills via `tools/skills_sync.py`.
-4. Optionally backgrounded `hermes dashboard` in a subshell when
-   `HERMES_DASHBOARD=1` — **not supervised**, no restart.
-5. `exec hermes "$@"` — tini's sole direct child.
+4. Optionally backgrounded `chippi dashboard` in a subshell when
+   `CHIPPI_DASHBOARD=1` — **not supervised**, no restart.
+5. `exec chippi "$@"` — tini's sole direct child.
 
 Known limitations: dashboard crash → stays dead; dashboard fails at startup →
 silent; gateway crash → dashboard dies too. The May 4, 2026 decision was
@@ -95,9 +95,9 @@ Adding per-profile gateway supervision changed that.
 
 ### ServiceManager surface (what we wrapped, not refactored)
 
-All init-system logic lives in **`hermes_cli/gateway.py`** (~5,400 LOC at
+All init-system logic lives in **`chippi_cli/gateway.py`** (~5,400 LOC at
 re-validation). The systemd/launchd code is ~1,500 lines of that, plus a
-separate **`hermes_cli/gateway_windows.py`** (~690 LOC) for Windows
+separate **`chippi_cli/gateway_windows.py`** (~690 LOC) for Windows
 Scheduled Tasks.
 
 | Layer | Systemd functions | Launchd functions | Windows functions |
@@ -111,25 +111,25 @@ Scheduled Tasks.
 
 Container-relevant callers outside `gateway.py`:
 
-- `hermes_cli/status.py` — gained an `s6` branch for in-container runs.
-- `hermes_cli/profiles.py` — `create_profile` / `delete_profile` register and
+- `chippi_cli/status.py` — gained an `s6` branch for in-container runs.
+- `chippi_cli/profiles.py` — `create_profile` / `delete_profile` register and
   unregister with s6 inside the container (no-op on host).
-- `hermes_cli/doctor.py` — `_check_gateway_service_linger` skips on s6, and a
-  new "Service Supervisor" section reports main-hermes / dashboard /
+- `chippi_cli/doctor.py` — `_check_gateway_service_linger` skips on s6, and a
+  new "Service Supervisor" section reports main-chippi / dashboard /
   profile-gateway counts via the ServiceManager.
-- `hermes_cli/gateway.py::gateway_command` — the
+- `chippi_cli/gateway.py::gateway_command` — the
   `elif is_container():` rejection arms that refused gateway lifecycle
   operations were removed; the `_dispatch_via_service_manager_if_s6` helper
   intercepts start/stop/restart and routes them through s6.
 
 ### Per-profile gateway spawning
 
-`hermes gateway start`, `coder gateway start` (profile alias), and
-`hermes -p <profile> gateway start` all spawn a gateway process scoped to a
+`chippi gateway start`, `coder gateway start` (profile alias), and
+`chippi -p <profile> gateway start` all spawn a gateway process scoped to a
 given profile. See
-[Profiles: Running Gateways](https://hermes-agent.nousresearch.com/docs/user-guide/profiles#running-gateways).
+[Profiles: Running Gateways](https://chippi-agent.nousresearch.com/docs/user-guide/profiles#running-gateways).
 On host, lifecycle is managed via per-profile systemd units
-(`hermes-gateway-<profile>.service`); inside the container, an s6 service at
+(`chippi-gateway-<profile>.service`); inside the container, an s6 service at
 `/run/service/gateway-<name>/` is registered when the profile is created and
 torn down when it's deleted.
 
@@ -139,7 +139,7 @@ directories at `/opt/data/profiles/<name>/` live on the persistent VOLUME,
 and each one records its gateway's last state in `gateway_state.json`.
 `/etc/cont-init.d/02-reconcile-profiles` walks the persistent profiles on
 every container boot, recreates the s6 service slots via
-`hermes_cli/container_boot.py`, and auto-starts those whose last recorded
+`chippi_cli/container_boot.py`, and auto-starts those whose last recorded
 state was `running`. Profiles whose last state was `stopped`,
 `startup_failed`, `starting`, or absent get their slot recreated in the
 `down` state and wait for explicit user action. `docker restart` is therefore
@@ -151,20 +151,20 @@ stopped ones stay stopped.
 - **Root/non-root model:** `/init` runs as root to set up the supervision
   tree, install signal handlers, and run the stage2 hook that does
   `usermod`/`chown`. Each supervised service drops to UID 10000 via
-  `s6-setuidgid hermes` in its `run` script. The per-service `s6-supervise`
+  `s6-setuidgid chippi` in its `run` script. The per-service `s6-supervise`
   monitor stays root so it can signal its child regardless of UID. Net
-  effect: hermes and all its subprocesses run as UID 10000 exactly as
+  effect: chippi and all its subprocesses run as UID 10000 exactly as
   before; only the supervision tree itself runs as root.
 - v3.2.3.0 has limited non-root support for running `/init` itself as
   non-root — some tools (`fix-attrs`, `logutil-service`) assume root. We
   don't hit this because `/init` runs as root.
 - Scandir hard cap: `services_max` default 1000, configurable to 160,000.
 - `/command/with-contenv` sources `/run/s6/container_environment/*` into
-  service env — convenient for passing `HERMES_HOME` etc.
+  service env — convenient for passing `CHIPPI_HOME` etc.
 - s6 signal semantics: service crash triggers `s6-supervise` restart after
   1s; override with a `finish` script.
 - Zombie reaping: PID 1 (s6-svscan) reaps all zombies non-blockingly on
-  SIGCHLD. Any subagent subprocess spawned by the main hermes process is
+  SIGCHLD. Any subagent subprocess spawned by the main chippi process is
   reaped automatically.
 
 ---
@@ -173,40 +173,40 @@ stopped ones stay stopped.
 
 ### D1. s6-overlay replaces tini entirely
 
-Container ENTRYPOINT is `/init`, PID 1 is s6-svscan. The main hermes
+Container ENTRYPOINT is `/init`, PID 1 is s6-svscan. The main chippi
 process, the dashboard, and every per-profile gateway run as supervised
 services. This is a single breaking change to the container contract.
 
-### D2. Main hermes is an s6 service with container-exit semantics
+### D2. Main chippi is an s6 service with container-exit semantics
 
-The contract "container exits when `hermes` exits" is preserved via a
+The contract "container exits when `chippi` exits" is preserved via a
 service `finish` script that writes to
 `/run/s6-linux-init-container-results/exitcode` and calls
 `/run/s6/basedir/bin/halt`. All five supported invocations work:
 
 | `docker run <image> …` | Behavior |
 |---|---|
-| (no args) | `hermes` with no args, container exits when hermes exits |
-| `chat -q "..."` | `hermes chat -q "..."`, container exits with hermes exit code |
+| (no args) | `chippi` with no args, container exits when chippi exits |
+| `chat -q "..."` | `chippi chat -q "..."`, container exits with chippi exit code |
 | `sleep infinity` | `sleep infinity` directly (long-lived sandbox mode) |
 | `bash` | interactive `bash` directly |
 | `docker run -it … --tui` | interactive Ink TUI with real TTY — see D9 |
 
 `docker/main-wrapper.sh` detects whether `$1` is an executable on PATH and
 routes either to "run this as a one-shot main service" or "wrap with
-hermes".
+chippi".
 
 ### D3. Static services at build time; dynamic (per-profile) services at runtime
 
 s6 offers two mechanisms:
 
-- **s6-rc** (declarative, compile-then-swap): used for main hermes and the
+- **s6-rc** (declarative, compile-then-swap): used for main chippi and the
   dashboard — they're known at image build time.
 - **scandir** (drop a directory + `s6-svscanctl -a`): used for per-profile
   gateways — profiles are user-created after the image is built.
 
 Per-profile gateway service dirs live at `/run/service/gateway-<profile>/`
-(tmpfs, hermes-writable). s6-svscan picks them up on rescan.
+(tmpfs, chippi-writable). s6-svscan picks them up on rescan.
 
 ### D4. ServiceManager protocol with two methods for runtime registration
 
@@ -245,7 +245,7 @@ profile gateway," not a general-purpose process-management API.
 ### D5. Per-profile gateway service spec is fixed, not user-provided
 
 Every profile gateway has the same command shape
-(`hermes -p <profile> gateway run`, or `hermes gateway run` for the default
+(`chippi -p <profile> gateway run`, or `chippi gateway run` for the default
 profile). The s6 backend generates the `run` script from a fixed template
 given the profile name — no arbitrary command list. This keeps the API
 surface tight and prevents callers from accidentally registering
@@ -267,7 +267,7 @@ existing functions; container-only code (the profile hooks) uses the new one.
 
 `_s6_running()` probes `/proc/1/comm` (world-readable) and
 `/run/s6/basedir`. The earlier `/proc/1/exe` probe was root-only readable
-and silently failed for the unprivileged hermes user (UID 10000), making
+and silently failed for the unprivileged chippi user (UID 10000), making
 the entire runtime-registration path inert in production — caught in PR
 review.
 
@@ -275,31 +275,31 @@ review.
 
 `SystemdServiceManager` / `LaunchdServiceManager` / `WindowsServiceManager`
 are thin adapters over the existing `systemd_*` / `launchd_*` module-level
-functions in `hermes_cli/gateway.py` and the
+functions in `chippi_cli/gateway.py` and the
 `gateway_windows.install/uninstall/start/stop/restart/is_installed`
-functions in `hermes_cli/gateway_windows.py`. We get the abstraction
+functions in `chippi_cli/gateway_windows.py`. We get the abstraction
 without rewriting ~2,200 LOC of working code.
 
 ### D8. Profile create/delete hooks register/unregister the s6 service
 
-When `hermes profile create <name>` runs inside the container, the
+When `chippi profile create <name>` runs inside the container, the
 profile-creation code path calls
 `ServiceManager.register_profile_gateway(<name>)` if
-`supports_runtime_registration()` is True. When `hermes profile delete
+`supports_runtime_registration()` is True. When `chippi profile delete
 <name>` runs, it calls `unregister_profile_gateway(<name>)`. On host, both
 calls are no-ops (registration not supported; existing systemd unit
 generation continues to handle install/uninstall).
 
-Existing per-profile `hermes -p <profile> gateway start/stop/restart` CLI
+Existing per-profile `chippi -p <profile> gateway start/stop/restart` CLI
 commands continue to work — in the container they dispatch to
 `ServiceManager.start/stop/restart("gateway-<profile>")`, which translates
 to `s6-svc -u`/`-d`/`-t` on the service dir.
 
-`hermes gateway start` (no `-p`) targets a special `gateway-default` slot
+`chippi gateway start` (no `-p`) targets a special `gateway-default` slot
 that's always registered by the cont-init reconciler. Its run script omits
-the `-p` flag and runs against the root `$HERMES_HOME` profile.
+the `-p` flag and runs against the root `$CHIPPI_HOME` profile.
 
-`--all` lifecycle (`hermes gateway stop --all`, `... restart --all`)
+`--all` lifecycle (`chippi gateway stop --all`, `... restart --all`)
 iterates `mgr.list_profile_gateways()` through s6 so s6's `want up`/`want
 down` flips correctly. Without this, `--all` fell through to `pkill`
 followed by s6-supervise auto-restart — net effect: kick instead of stop.
@@ -316,7 +316,7 @@ disconnects service stdio from the container TTY (documented:
 program" after the supervision tree is up. The CMD inherits
 stdin/stdout/stderr from `/init` — which in `-it` mode is the container
 TTY. The stage2 hook detects the TUI case and short-circuits the
-main-hermes service so the hermes CMD becomes that main program.
+main-chippi service so the chippi CMD becomes that main program.
 
 ```sh
 # In docker/stage2-hook.sh
@@ -324,22 +324,22 @@ _is_tui_invocation() {
     for arg in "$@"; do
         case "$arg" in --tui|-T) return 0 ;; esac
     done
-    case "${HERMES_TUI:-}" in 1|true|TRUE|yes) return 0 ;; esac
+    case "${CHIPPI_TUI:-}" in 1|true|TRUE|yes) return 0 ;; esac
     if [ -t 0 ] && [ $# -eq 0 ]; then return 0; fi
     return 1
 }
 ```
 
-And in `docker/s6-rc.d/main-hermes/run`:
+And in `docker/s6-rc.d/main-chippi/run`:
 
 ```sh
-if [ -f /var/run/s6/container_environment/HERMES_TUI_MODE ]; then
+if [ -f /var/run/s6/container_environment/CHIPPI_TUI_MODE ]; then
     exec sleep infinity   # s6-overlay will exec CMD as the TTY-connected main
 fi
-exec s6-setuidgid hermes hermes ${HERMES_ARGS:-}
+exec s6-setuidgid chippi chippi ${CHIPPI_ARGS:-}
 ```
 
-In TUI mode main hermes is effectively unsupervised (same as the pre-s6
+In TUI mode main chippi is effectively unsupervised (same as the pre-s6
 behavior with tini — acceptable because the user is interactively
 present). Dashboard and profile gateways still get full s6 supervision via
 their separate services.
@@ -358,14 +358,14 @@ and `COLUMNS=123` as the probe.
 | s6-overlay non-root quirks (logutil-service, fix-attrs) bite us | Low | Low | Supervisor runs as root, services drop — sidesteps these issues |
 | Podman rootless UID mapping confuses s6 | Medium | Low | Documented as supported, fix reactively; a Podman + Docker environment is stood up for validation |
 | Test harness is flaky (docker daemon issues, timing) | Medium | Low | Generous timeouts; skip when docker unavailable; polling helpers replace fixed sleeps in `test_container_restart.py` |
-| Profile gateway crash loop masks a real config error | Low | Medium | s6 `finish` script `max_restarts` cap (planned follow-up); operators see crash-looping logs in `$HERMES_HOME/logs/gateways/<profile>/` |
+| Profile gateway crash loop masks a real config error | Low | Medium | s6 `finish` script `max_restarts` cap (planned follow-up); operators see crash-looping logs in `$CHIPPI_HOME/logs/gateways/<profile>/` |
 | Dockerfile+entrypoint drift from linter (hadolint/shellcheck) reveals latent bugs | Low | Low | CI lint jobs catch them; fix or document ignore with rationale |
 | Stale `gateway.pid` from a dead container collides with an unrelated live PID in the restarted container | Low | Medium | Cont-init reconciliation removes `gateway.pid` and `processes.json` from every profile dir on boot, before any new gateway starts |
-| `docker restart` silently loses per-profile gateway registrations (tmpfs scandir wiped) | High (without mitigation) | High | Cont-init reconciliation re-registers from persistent `$HERMES_HOME/profiles/` and auto-starts those last seen `running`; outcome recorded to `$HERMES_HOME/logs/container-boot.log` (size-bounded, rotates to `.1` at 256 KiB) |
-| A `running` gateway that's actually broken auto-restarts into a crash loop after every container restart | Low | Medium | s6 `finish` script `max_restarts` cap (planned); follow-up: `hermes doctor` alerts when N consecutive container restarts ended in `startup_failed` |
-| `_s6_running()` detection works as root but silently fails for unprivileged hermes user, making runtime-registration path inert | High (without mitigation) | High | **Caught in PR review.** Detection now probes `/proc/1/comm` (world-readable) + `/run/s6/basedir`. Docker integration tests refactored to `docker exec -u hermes` so the realistic runtime user is exercised |
-| `s6-svscanctl` from hermes hits EACCES on the root-owned control FIFO | Medium | Medium | `02-reconcile-profiles` chowns `/run/service/.s6-svscan/{control,lock}` to hermes after stage1 creates them |
-| Per-service `supervise/control` FIFO is root-owned by s6-supervise, blocking `s6-svc` from hermes | Known | Medium | Surfaced cleanly as `S6CommandError` (with rc + stderr) instead of raw `CalledProcessError`. Permission fix tracked as a follow-up (small SUID helper, polling chown loop in cont-init.d, or replace `s6-svc` with `down`-marker manipulation) |
+| `docker restart` silently loses per-profile gateway registrations (tmpfs scandir wiped) | High (without mitigation) | High | Cont-init reconciliation re-registers from persistent `$CHIPPI_HOME/profiles/` and auto-starts those last seen `running`; outcome recorded to `$CHIPPI_HOME/logs/container-boot.log` (size-bounded, rotates to `.1` at 256 KiB) |
+| A `running` gateway that's actually broken auto-restarts into a crash loop after every container restart | Low | Medium | s6 `finish` script `max_restarts` cap (planned); follow-up: `chippi doctor` alerts when N consecutive container restarts ended in `startup_failed` |
+| `_s6_running()` detection works as root but silently fails for unprivileged chippi user, making runtime-registration path inert | High (without mitigation) | High | **Caught in PR review.** Detection now probes `/proc/1/comm` (world-readable) + `/run/s6/basedir`. Docker integration tests refactored to `docker exec -u chippi` so the realistic runtime user is exercised |
+| `s6-svscanctl` from chippi hits EACCES on the root-owned control FIFO | Medium | Medium | `02-reconcile-profiles` chowns `/run/service/.s6-svscan/{control,lock}` to chippi after stage1 creates them |
+| Per-service `supervise/control` FIFO is root-owned by s6-supervise, blocking `s6-svc` from chippi | Known | Medium | Surfaced cleanly as `S6CommandError` (with rc + stderr) instead of raw `CalledProcessError`. Permission fix tracked as a follow-up (small SUID helper, polling chown loop in cont-init.d, or replace `s6-svc` with `down`-marker manipulation) |
 
 ---
 
@@ -373,14 +373,14 @@ and `COLUMNS=123` as the probe.
 
 | # | Question | Decision |
 |---|---|---|
-| OQ1 | Gate Phase 2 behind env var? | Ship directly (Hermes is pre-1.0; users can pin the previous image) |
-| OQ2 | s6 root model | Root `/init`, drop per-service via `s6-setuidgid hermes` |
-| OQ3 | Dashboard opt-in mechanism | Always declared as an s6 service; `03-dashboard-toggle` cont-init script writes a `down` marker when `HERMES_DASHBOARD` is unset so `s6-svstat` reports the slot's real state |
+| OQ1 | Gate Phase 2 behind env var? | Ship directly (Chippi is pre-1.0; users can pin the previous image) |
+| OQ2 | s6 root model | Root `/init`, drop per-service via `s6-setuidgid chippi` |
+| OQ3 | Dashboard opt-in mechanism | Always declared as an s6 service; `03-dashboard-toggle` cont-init script writes a `down` marker when `CHIPPI_DASHBOARD` is unset so `s6-svstat` reports the slot's real state |
 | OQ4 | Podman rootless | Supported, fix reactively |
-| OQ5 | Service naming | `gateway-<profile>` (matches pre-existing `hermes-gateway-<profile>.service` systemd convention) |
+| OQ5 | Service naming | `gateway-<profile>` (matches pre-existing `chippi-gateway-<profile>.service` systemd convention) |
 | OQ6 | — (retired; no subagent gateways in scope) | — |
 | OQ7 | Resource limits per profile gateway | Defer (no per-cgroup limits; rely on the container's overall limit) |
-| OQ8 | Log persistence | `$HERMES_HOME/logs/gateways/<profile>/`. The log path is sourced from runtime `$HERMES_HOME` via `with-contenv`, NOT Python-substituted at registration time |
+| OQ8 | Log persistence | `$CHIPPI_HOME/logs/gateways/<profile>/`. The log path is sourced from runtime `$CHIPPI_HOME` via `with-contenv`, NOT Python-substituted at registration time |
 | OQ9 | TUI passthrough | Trust the documented [s6-overlay#230](https://github.com/just-containers/s6-overlay/issues/230) Solution 1; harness includes a TTY passthrough hard-gate test |
 
 **Post-merge additions from PR #30136 review:**
@@ -392,7 +392,7 @@ and `COLUMNS=123` as the probe.
   pinned via build ARGs and verified with `sha256sum -c` against a single
   checksum file (avoids hadolint DL4006 piped-shell warning).
 - **`gateway-default` slot:** always registered by the reconciler so
-  `hermes gateway start` (no `-p`) has somewhere to land.
+  `chippi gateway start` (no `-p`) has somewhere to land.
 - **Friendly lifecycle errors:** `GatewayNotRegisteredError` and
   `S6CommandError` translate `CalledProcessError` into actionable CLI
   messages.
@@ -408,21 +408,21 @@ and `COLUMNS=123` as the probe.
 
 - [x] Test harness (`tests/docker/`) passes against the s6 image
 - [x] hadolint + shellcheck run green in CI
-- [x] `docker run -it --rm hermes-agent --tui` starts the Ink TUI with
+- [x] `docker run -it --rm chippi-agent --tui` starts the Ink TUI with
       working keyboard input, cursor control, and resize (SIGWINCH)
 - [x] Dashboard crashes are recovered by s6 within ~2s
-- [x] `hermes profile create test` inside a container creates
+- [x] `chippi profile create test` inside a container creates
       `/run/service/gateway-test/`
-- [x] `hermes -p test gateway start` inside a container dispatches through s6
-- [x] `hermes -p test gateway stop` inside a container cleanly stops via s6
-- [x] `hermes profile delete test` inside a container removes
+- [x] `chippi -p test gateway start` inside a container dispatches through s6
+- [x] `chippi -p test gateway stop` inside a container cleanly stops via s6
+- [x] `chippi profile delete test` inside a container removes
       `/run/service/gateway-test/`
 - [x] Profile gateway logs persist at
-      `$HERMES_HOME/logs/gateways/test/current`
-- [x] `hermes status` inside the container shows `Manager: s6`
-- [x] `hermes gateway start` (no `-p`) inside a container targets
+      `$CHIPPI_HOME/logs/gateways/test/current`
+- [x] `chippi status` inside the container shows `Manager: s6`
+- [x] `chippi gateway start` (no `-p`) inside a container targets
       `gateway-default` and runs against the root profile
-- [x] `hermes gateway stop --all` / `... restart --all` iterate every
+- [x] `chippi gateway stop --all` / `... restart --all` iterate every
       profile gateway under s6 instead of pkill-then-supervise-restart
 - [x] `docker restart` survives per-profile gateway registrations via the
       cont-init reconciler; running gateways come back up, stopped ones
@@ -430,5 +430,5 @@ and `COLUMNS=123` as the probe.
 - [x] Multi-arch image builds for both `linux/amd64` and `linux/arm64`
 - [x] s6-overlay tarballs are SHA256-verified at build time
 - [x] No systemd/launchd host-side functions were modified (only wrapped)
-- [x] `hermes gateway install/start/stop` on Linux host and macOS host
+- [x] `chippi gateway install/start/stop` on Linux host and macOS host
       behave identically to pre-change

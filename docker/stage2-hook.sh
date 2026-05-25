@@ -6,7 +6,7 @@
 # Per-service privilege drop happens inside each service's `run` script
 # (and in main-wrapper.sh) via s6-setuidgid, not here.
 #
-# Wired into the image as /etc/cont-init.d/01-hermes-setup by the
+# Wired into the image as /etc/cont-init.d/01-chippi-setup by the
 # Dockerfile. The shim at docker/entrypoint.sh forwards to this script
 # so external references to docker/entrypoint.sh still work.
 #
@@ -17,94 +17,94 @@
 
 set -eu
 
-HERMES_HOME="${HERMES_HOME:-/opt/data}"
-INSTALL_DIR="/opt/hermes"
+CHIPPI_HOME="${CHIPPI_HOME:-/opt/data}"
+INSTALL_DIR="/opt/chippi"
 
 # --- UID/GID remap ---
-if [ -n "${HERMES_UID:-}" ] && [ "$HERMES_UID" != "$(id -u hermes)" ]; then
-    echo "[stage2] Changing hermes UID to $HERMES_UID"
-    usermod -u "$HERMES_UID" hermes
+if [ -n "${CHIPPI_UID:-}" ] && [ "$CHIPPI_UID" != "$(id -u chippi)" ]; then
+    echo "[stage2] Changing chippi UID to $CHIPPI_UID"
+    usermod -u "$CHIPPI_UID" chippi
 fi
-if [ -n "${HERMES_GID:-}" ] && [ "$HERMES_GID" != "$(id -g hermes)" ]; then
-    echo "[stage2] Changing hermes GID to $HERMES_GID"
+if [ -n "${CHIPPI_GID:-}" ] && [ "$CHIPPI_GID" != "$(id -g chippi)" ]; then
+    echo "[stage2] Changing chippi GID to $CHIPPI_GID"
     # -o allows non-unique GID (e.g. macOS GID 20 "staff" may already
     # exist as "dialout" in the Debian-based container image).
-    groupmod -o -g "$HERMES_GID" hermes 2>/dev/null || true
+    groupmod -o -g "$CHIPPI_GID" chippi 2>/dev/null || true
 fi
 
 # --- Fix ownership of data volume ---
-actual_hermes_uid=$(id -u hermes)
+actual_chippi_uid=$(id -u chippi)
 needs_chown=false
-if [ -n "${HERMES_UID:-}" ] && [ "$HERMES_UID" != "10000" ]; then
+if [ -n "${CHIPPI_UID:-}" ] && [ "$CHIPPI_UID" != "10000" ]; then
     needs_chown=true
-elif [ "$(stat -c %u "$HERMES_HOME" 2>/dev/null)" != "$actual_hermes_uid" ]; then
+elif [ "$(stat -c %u "$CHIPPI_HOME" 2>/dev/null)" != "$actual_chippi_uid" ]; then
     needs_chown=true
 fi
 if [ "$needs_chown" = true ]; then
-    echo "[stage2] Fixing ownership of $HERMES_HOME to hermes ($actual_hermes_uid)"
+    echo "[stage2] Fixing ownership of $CHIPPI_HOME to chippi ($actual_chippi_uid)"
     # In rootless Podman the container's "root" is mapped to an
     # unprivileged host UID — chown will fail. That's fine: the volume
     # is already owned by the mapped user on the host side.
-    chown -R hermes:hermes "$HERMES_HOME" 2>/dev/null || \
+    chown -R chippi:chippi "$CHIPPI_HOME" 2>/dev/null || \
         echo "[stage2] Warning: chown failed (rootless container?) — continuing"
     # The .venv must also be re-chowned when UID is remapped, otherwise
     # lazy_deps.py cannot install platform packages (discord.py, etc.).
-    chown -R hermes:hermes "$INSTALL_DIR/.venv" 2>/dev/null || \
+    chown -R chippi:chippi "$INSTALL_DIR/.venv" 2>/dev/null || \
         echo "[stage2] Warning: chown .venv failed (rootless container?) — continuing"
 fi
 
-# Always reset ownership of $HERMES_HOME/profiles to hermes on every
+# Always reset ownership of $CHIPPI_HOME/profiles to chippi on every
 # boot. Profile dirs and files can land owned by root when commands
-# are invoked via `docker exec <container> hermes …` (which defaults
+# are invoked via `docker exec <container> chippi …` (which defaults
 # to root unless `-u` is passed), and that breaks the cont-init
-# reconciler (02-reconcile-profiles) which runs as hermes and walks
+# reconciler (02-reconcile-profiles) which runs as chippi and walks
 # the profiles dir. Idempotent; skipped on rootless containers where
 # chown would fail.
-if [ -d "$HERMES_HOME/profiles" ]; then
-    chown -R hermes:hermes "$HERMES_HOME/profiles" 2>/dev/null || true
+if [ -d "$CHIPPI_HOME/profiles" ]; then
+    chown -R chippi:chippi "$CHIPPI_HOME/profiles" 2>/dev/null || true
 fi
 
 # --- config.yaml permissions ---
-# Ensure config.yaml is readable by the hermes runtime user even if it
+# Ensure config.yaml is readable by the chippi runtime user even if it
 # was edited on the host after initial ownership setup.
-if [ -f "$HERMES_HOME/config.yaml" ]; then
-    chown hermes:hermes "$HERMES_HOME/config.yaml" 2>/dev/null || true
-    chmod 640 "$HERMES_HOME/config.yaml" 2>/dev/null || true
+if [ -f "$CHIPPI_HOME/config.yaml" ]; then
+    chown chippi:chippi "$CHIPPI_HOME/config.yaml" 2>/dev/null || true
+    chmod 640 "$CHIPPI_HOME/config.yaml" 2>/dev/null || true
 fi
 
-# --- Seed directory structure as hermes user ---
-# Run as hermes via s6-setuidgid so dirs end up owned correctly (matters
+# --- Seed directory structure as chippi user ---
+# Run as chippi via s6-setuidgid so dirs end up owned correctly (matters
 # under rootless Podman where chown back to root would fail).
 #
 # Use direct `mkdir -p` invocation (no `sh -c "..."` wrapper) so the
-# shell isn't a second interpreter — defends against $HERMES_HOME values
+# shell isn't a second interpreter — defends against $CHIPPI_HOME values
 # containing shell metacharacters. PR #30136 review item O2.
-s6-setuidgid hermes mkdir -p \
-    "$HERMES_HOME/cron" \
-    "$HERMES_HOME/sessions" \
-    "$HERMES_HOME/logs" \
-    "$HERMES_HOME/hooks" \
-    "$HERMES_HOME/memories" \
-    "$HERMES_HOME/skills" \
-    "$HERMES_HOME/skins" \
-    "$HERMES_HOME/plans" \
-    "$HERMES_HOME/workspace" \
-    "$HERMES_HOME/home"
+s6-setuidgid chippi mkdir -p \
+    "$CHIPPI_HOME/cron" \
+    "$CHIPPI_HOME/sessions" \
+    "$CHIPPI_HOME/logs" \
+    "$CHIPPI_HOME/hooks" \
+    "$CHIPPI_HOME/memories" \
+    "$CHIPPI_HOME/skills" \
+    "$CHIPPI_HOME/skins" \
+    "$CHIPPI_HOME/plans" \
+    "$CHIPPI_HOME/workspace" \
+    "$CHIPPI_HOME/home"
 
-# --- Install-method stamp (read by detect_install_method() in hermes status) ---
+# --- Install-method stamp (read by detect_install_method() in chippi status) ---
 # Preserved from the tini-era entrypoint (PR #27843). Must be written as
-# the hermes user so ownership matches the file's documented owner.
+# the chippi user so ownership matches the file's documented owner.
 # tee is invoked directly via s6-setuidgid (no `sh -c` wrapper) for the
 # same shell-metacharacter safety described above.
-printf 'docker\n' | s6-setuidgid hermes tee "$HERMES_HOME/.install_method" >/dev/null \
+printf 'docker\n' | s6-setuidgid chippi tee "$CHIPPI_HOME/.install_method" >/dev/null \
     || true
 
 # --- Seed config files (only on first boot) ---
 seed_one() {
     dest=$1
     src=$2
-    if [ ! -f "$HERMES_HOME/$dest" ] && [ -f "$INSTALL_DIR/$src" ]; then
-        s6-setuidgid hermes cp "$INSTALL_DIR/$src" "$HERMES_HOME/$dest"
+    if [ ! -f "$CHIPPI_HOME/$dest" ] && [ -f "$INSTALL_DIR/$src" ]; then
+        s6-setuidgid chippi cp "$INSTALL_DIR/$src" "$CHIPPI_HOME/$dest"
     fi
 }
 seed_one ".env" ".env.example"
@@ -114,18 +114,18 @@ seed_one "SOUL.md" "docker/SOUL.md"
 # .env holds API keys and secrets — restrict to owner-only access. Applied
 # unconditionally (not only on first-seed) so a host-mounted .env that was
 # created with a permissive umask gets tightened on every container start.
-if [ -f "$HERMES_HOME/.env" ]; then
-    chown hermes:hermes "$HERMES_HOME/.env" 2>/dev/null || true
-    chmod 600 "$HERMES_HOME/.env" 2>/dev/null || true
+if [ -f "$CHIPPI_HOME/.env" ]; then
+    chown chippi:chippi "$CHIPPI_HOME/.env" 2>/dev/null || true
+    chmod 600 "$CHIPPI_HOME/.env" 2>/dev/null || true
 fi
 
 # auth.json: bootstrap from env on first boot only. Same semantics as the
 # pre-s6 entrypoint — the [ ! -f ] guard is critical to avoid clobbering
 # rotated refresh tokens on container restart.
-if [ ! -f "$HERMES_HOME/auth.json" ] && [ -n "${HERMES_AUTH_JSON_BOOTSTRAP:-}" ]; then
-    printf '%s' "$HERMES_AUTH_JSON_BOOTSTRAP" > "$HERMES_HOME/auth.json"
-    chown hermes:hermes "$HERMES_HOME/auth.json" 2>/dev/null || true
-    chmod 600 "$HERMES_HOME/auth.json"
+if [ ! -f "$CHIPPI_HOME/auth.json" ] && [ -n "${CHIPPI_AUTH_JSON_BOOTSTRAP:-}" ]; then
+    printf '%s' "$CHIPPI_AUTH_JSON_BOOTSTRAP" > "$CHIPPI_HOME/auth.json"
+    chown chippi:chippi "$CHIPPI_HOME/auth.json" 2>/dev/null || true
+    chmod 600 "$CHIPPI_HOME/auth.json"
 fi
 
 # --- Sync bundled skills ---
@@ -135,7 +135,7 @@ fi
 # the python binary's own bin-stub already sets up (sys.path is rooted
 # at the venv's site-packages by virtue of running .venv/bin/python).
 if [ -d "$INSTALL_DIR/skills" ]; then
-    s6-setuidgid hermes "$INSTALL_DIR/.venv/bin/python" "$INSTALL_DIR/tools/skills_sync.py" \
+    s6-setuidgid chippi "$INSTALL_DIR/.venv/bin/python" "$INSTALL_DIR/tools/skills_sync.py" \
         || echo "[stage2] Warning: skills_sync.py failed; continuing"
 fi
 

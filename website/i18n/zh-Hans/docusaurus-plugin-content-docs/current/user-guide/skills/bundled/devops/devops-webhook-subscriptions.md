@@ -23,30 +23,30 @@ Webhook subscriptions：事件驱动的 agent 运行。
 ## 参考：完整 SKILL.md
 
 :::info
-以下是 Hermes 在触发此 skill 时加载的完整 skill 定义。这是 agent 在 skill 激活时所看到的指令内容。
+以下是 Chippi 在触发此 skill 时加载的完整 skill 定义。这是 agent 在 skill 激活时所看到的指令内容。
 :::
 
 # Webhook Subscriptions
 
-创建动态 webhook 订阅，使外部服务（GitHub、GitLab、Stripe、CI/CD、IoT 传感器、监控工具）能够通过向 URL 发送 POST 请求来触发 Hermes agent 运行。
+创建动态 webhook 订阅，使外部服务（GitHub、GitLab、Stripe、CI/CD、IoT 传感器、监控工具）能够通过向 URL 发送 POST 请求来触发 Chippi agent 运行。
 
 ## 设置（必须先完成）
 
 在创建订阅之前，必须先启用 webhook 平台。检查方式：
 ```bash
-hermes webhook list
+chippi webhook list
 ```
 
 如果提示"Webhook platform is not enabled"，请进行设置：
 
 ### 选项 1：设置向导
 ```bash
-hermes gateway setup
+chippi gateway setup
 ```
 按照提示启用 webhook、设置端口并配置全局 HMAC 密钥。
 
 ### 选项 2：手动配置
-在 `~/.hermes/config.yaml` 中添加：
+在 `~/.chippi/config.yaml` 中添加：
 ```yaml
 platforms:
   webhook:
@@ -58,7 +58,7 @@ platforms:
 ```
 
 ### 选项 3：环境变量
-在 `~/.hermes/.env` 中添加：
+在 `~/.chippi/.env` 中添加：
 ```bash
 WEBHOOK_ENABLED=true
 WEBHOOK_PORT=8644
@@ -67,9 +67,9 @@ WEBHOOK_SECRET=generate-a-strong-secret-here
 
 配置完成后，启动（或重启）gateway：
 ```bash
-hermes gateway run
+chippi gateway run
 # 如果使用 systemd：
-systemctl --user restart hermes-gateway
+systemctl --user restart chippi-gateway
 ```
 
 验证是否正在运行：
@@ -79,11 +79,11 @@ curl http://localhost:8644/health
 
 ## 命令
 
-所有管理操作均通过 `hermes webhook` CLI 命令完成：
+所有管理操作均通过 `chippi webhook` CLI 命令完成：
 
 ### 创建订阅
 ```bash
-hermes webhook subscribe <name> \
+chippi webhook subscribe <name> \
   --prompt "Prompt template with {payload.fields}" \
   --events "event1,event2" \
   --description "What this does" \
@@ -97,18 +97,18 @@ hermes webhook subscribe <name> \
 
 ### 列出订阅
 ```bash
-hermes webhook list
+chippi webhook list
 ```
 
 ### 删除订阅
 ```bash
-hermes webhook remove <name>
+chippi webhook remove <name>
 ```
 
 ### 测试订阅
 ```bash
-hermes webhook test <name>
-hermes webhook test <name> --payload '{"key": "value"}'
+chippi webhook test <name>
+chippi webhook test <name> --payload '{"key": "value"}'
 ```
 
 ## Prompt 模板
@@ -126,7 +126,7 @@ Prompt（提示词）支持使用 `{dot.notation}` 访问嵌套的 payload 字�
 
 ### GitHub：新 issue
 ```bash
-hermes webhook subscribe github-issues \
+chippi webhook subscribe github-issues \
   --events "issues" \
   --prompt "New GitHub issue #{issue.number}: {issue.title}\n\nAction: {action}\nAuthor: {issue.user.login}\nBody:\n{issue.body}\n\nPlease triage this issue." \
   --deliver telegram \
@@ -141,7 +141,7 @@ hermes webhook subscribe github-issues \
 
 ### GitHub：PR 审查
 ```bash
-hermes webhook subscribe github-prs \
+chippi webhook subscribe github-prs \
   --events "pull_request" \
   --prompt "PR #{pull_request.number} {action}: {pull_request.title}\nBy: {pull_request.user.login}\nBranch: {pull_request.head.ref}\n\n{pull_request.body}" \
   --skills "github-code-review" \
@@ -150,7 +150,7 @@ hermes webhook subscribe github-prs \
 
 ### Stripe：支付事件
 ```bash
-hermes webhook subscribe stripe-payments \
+chippi webhook subscribe stripe-payments \
   --events "payment_intent.succeeded,payment_intent.payment_failed" \
   --prompt "Payment {data.object.status}: {data.object.amount} cents from {data.object.receipt_email}" \
   --deliver telegram \
@@ -159,7 +159,7 @@ hermes webhook subscribe stripe-payments \
 
 ### CI/CD：构建通知
 ```bash
-hermes webhook subscribe ci-builds \
+chippi webhook subscribe ci-builds \
   --events "pipeline" \
   --prompt "Build {object_attributes.status} on {project.name} branch {object_attributes.ref}\nCommit: {commit.message}" \
   --deliver discord \
@@ -168,7 +168,7 @@ hermes webhook subscribe ci-builds \
 
 ### 通用监控告警
 ```bash
-hermes webhook subscribe alerts \
+chippi webhook subscribe alerts \
   --prompt "Alert: {alert.name}\nSeverity: {alert.severity}\nMessage: {alert.message}\n\nPlease investigate and suggest remediation." \
   --deliver origin
 ```
@@ -184,7 +184,7 @@ hermes webhook subscribe alerts \
 - 任何 LLM 往返调用属于浪费的 webhook 场景
 
 ```bash
-hermes webhook subscribe antenna-matches \
+chippi webhook subscribe antenna-matches \
   --deliver telegram \
   --deliver-chat-id "123456789" \
   --deliver-only \
@@ -201,11 +201,11 @@ hermes webhook subscribe antenna-matches \
 - 每个订阅自动生成 HMAC-SHA256 密钥（也可通过 `--secret` 自行提供）
 - webhook 适配器对每个传入的 POST 请求验证签名
 - `config.yaml` 中的静态路由不会被动态订阅覆盖
-- 订阅持久化保存至 `~/.hermes/webhook_subscriptions.json`
+- 订阅持久化保存至 `~/.chippi/webhook_subscriptions.json`
 
 ## 工作原理
 
-1. `hermes webhook subscribe` 写入 `~/.hermes/webhook_subscriptions.json`
+1. `chippi webhook subscribe` 写入 `~/.chippi/webhook_subscriptions.json`
 2. webhook 适配器在每次收到请求时热重载该文件（基于 mtime 检测，开销可忽略不计）
 3. 当匹配路由的 POST 请求到达时，适配器格式化 prompt 并触发 agent 运行
 4. agent 的响应被投递到已配置的目标（Telegram、Discord、GitHub comment 等）
@@ -214,9 +214,9 @@ hermes webhook subscribe antenna-matches \
 
 如果 webhook 无法正常工作：
 
-1. **gateway 是否在运行？** 通过 `systemctl --user status hermes-gateway` 或 `ps aux | grep gateway` 检查
+1. **gateway 是否在运行？** 通过 `systemctl --user status chippi-gateway` 或 `ps aux | grep gateway` 检查
 2. **webhook 服务器是否在监听？** `curl http://localhost:8644/health` 应返回 `{"status": "ok"}`
-3. **查看 gateway 日志：** `grep webhook ~/.hermes/logs/gateway.log | tail -20`
-4. **签名不匹配？** 验证服务中的 secret 与 `hermes webhook list` 返回的一致。GitHub 发送 `X-Hub-Signature-256`，GitLab 发送 `X-Gitlab-Token`。
+3. **查看 gateway 日志：** `grep webhook ~/.chippi/logs/gateway.log | tail -20`
+4. **签名不匹配？** 验证服务中的 secret 与 `chippi webhook list` 返回的一致。GitHub 发送 `X-Hub-Signature-256`，GitLab 发送 `X-Gitlab-Token`。
 5. **防火墙/NAT？** webhook URL 必须能从该服务访问到。本地开发时，请使用隧道工具（ngrok、cloudflared）。
-6. **事件类型错误？** 检查 `--events` 过滤器是否与服务发送的事件匹配。使用 `hermes webhook test <name>` 验证路由是否正常工作。
+6. **事件类型错误？** 检查 `--events` 过滤器是否与服务发送的事件匹配。使用 `chippi webhook test <name>` 验证路由是否正常工作。

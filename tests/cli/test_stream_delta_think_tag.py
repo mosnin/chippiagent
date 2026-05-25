@@ -7,10 +7,10 @@ import pytest
 
 
 def _make_cli_stub():
-    """Create a minimal HermesCLI-like object with stream state."""
-    from cli import HermesCLI
+    """Create a minimal ChippiCLI-like object with stream state."""
+    from cli import ChippiCLI
 
-    cli = HermesCLI.__new__(HermesCLI)
+    cli = ChippiCLI.__new__(ChippiCLI)
     cli.show_reasoning = False
     cli._stream_buf = ""
     cli._stream_started = False

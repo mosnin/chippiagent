@@ -10,7 +10,7 @@ on:
       - 'Dockerfile'
       - 'docker/**'
       - '.github/workflows/docker-publish.yml'
-      - '.github/actions/hermes-smoke-test/**'
+      - '.github/actions/chippi-smoke-test/**'
   pull_request:
     branches: [main]
     paths:
@@ -20,7 +20,7 @@ on:
       - 'Dockerfile'
       - 'docker/**'
       - '.github/workflows/docker-publish.yml'
-      - '.github/actions/hermes-smoke-test/**'
+      - '.github/actions/chippi-smoke-test/**'
   release:
     types: [published]
 
@@ -37,7 +37,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  IMAGE_NAME: nousresearch/hermes-agent
+  IMAGE_NAME: nousresearch/chippi-agent
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -47,7 +47,7 @@ jobs:
   # ---------------------------------------------------------------------------
   build-amd64:
     # Only run on the upstream repository, not on forks
-    if: github.repository == 'NousResearch/hermes-agent'
+    if: github.repository == 'NousResearch/chippi-agent'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     outputs:
@@ -76,7 +76,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=docker-amd64
 
       - name: Smoke test image
-        uses: ./.github/actions/hermes-smoke-test
+        uses: ./.github/actions/chippi-smoke-test
         with:
           image: ${{ env.IMAGE_NAME }}:test
 
@@ -92,8 +92,8 @@ jobs:
       #
       # Piggybacking here avoids a second image build: the smoke test
       # already proved the image loads + runs, so the daemon has it under
-      # `${IMAGE_NAME}:test` and we just point ``HERMES_TEST_IMAGE`` at
-      # that.  The fixture's ``HERMES_TEST_IMAGE`` branch (see
+      # `${IMAGE_NAME}:test` and we just point ``CHIPPI_TEST_IMAGE`` at
+      # that.  The fixture's ``CHIPPI_TEST_IMAGE`` branch (see
       # tests/docker/conftest.py:62-63) short-circuits the rebuild.
       #
       # Why this job and not a standalone one: the image is 5GB+; passing
@@ -114,13 +114,13 @@ jobs:
           # ``dev`` extra pulls in pytest, pytest-asyncio, pytest-timeout —
           # everything tests/docker/ needs.  We deliberately avoid ``all``
           # here because the docker tests only drive the container via
-          # subprocess and don't import hermes_agent's optional deps.
+          # subprocess and don't import chippi_agent's optional deps.
           uv pip install -e ".[dev]"
 
       - name: Run docker integration tests
         env:
           # Skip rebuild; use the image already loaded by the build step.
-          HERMES_TEST_IMAGE: ${{ env.IMAGE_NAME }}:test
+          CHIPPI_TEST_IMAGE: ${{ env.IMAGE_NAME }}:test
           # Match the policy in tests.yml :: test job — no accidental
           # real-API calls from inside the harness.
           OPENROUTER_API_KEY: ""
@@ -185,7 +185,7 @@ jobs:
   # smoke test, then on push/release push by digest.
   # ---------------------------------------------------------------------------
   build-arm64:
-    if: github.repository == 'NousResearch/hermes-agent'
+    if: github.repository == 'NousResearch/chippi-agent'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
     outputs:
@@ -214,7 +214,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=docker-arm64
 
       - name: Smoke test image
-        uses: ./.github/actions/hermes-smoke-test
+        uses: ./.github/actions/chippi-smoke-test
         with:
           image: ${{ env.IMAGE_NAME }}:test
 
@@ -268,7 +268,7 @@ jobs:
   # ancestor check is defense-in-depth.
   # ---------------------------------------------------------------------------
   merge:
-    if: github.repository == 'NousResearch/hermes-agent' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'release')
+    if: github.repository == 'NousResearch/chippi-agent' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'release')
     runs-on: ubuntu-latest
     needs: [build-amd64, build-arm64]
     timeout-minutes: 10
@@ -309,7 +309,7 @@ jobs:
         id: main_check
         run: |
           set -euo pipefail
-          image=nousresearch/hermes-agent
+          image=nousresearch/chippi-agent
 
           image_json=$(
             docker buildx imagetools inspect "${image}:main" \
@@ -421,7 +421,7 @@ jobs:
   # ---------------------------------------------------------------------------
   move-latest:
     if: |
-      github.repository == 'NousResearch/hermes-agent'
+      github.repository == 'NousResearch/chippi-agent'
       && github.event_name == 'release'
       && needs.merge.outputs.pushed_release_tag == 'true'
     needs: merge
@@ -449,7 +449,7 @@ jobs:
         id: latest_check
         run: |
           set -euo pipefail
-          image=nousresearch/hermes-agent
+          image=nousresearch/chippi-agent
 
           image_json=$(
             docker buildx imagetools inspect "${image}:latest" \
@@ -515,7 +515,7 @@ jobs:
           RELEASE_TAG: ${{ needs.merge.outputs.release_tag }}
         run: |
           set -euo pipefail
-          image=nousresearch/hermes-agent
+          image=nousresearch/chippi-agent
           docker buildx imagetools create \
             --tag "${image}:latest" \
             "${image}:${RELEASE_TAG}"

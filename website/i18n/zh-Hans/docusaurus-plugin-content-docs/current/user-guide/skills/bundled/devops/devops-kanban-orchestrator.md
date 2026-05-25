@@ -24,7 +24,7 @@ description: "用于通过 Kanban 路由工作的编排器 profile 的任务分�
 ## 参考：完整 SKILL.md
 
 :::info
-以下是 Hermes 在触发此 skill 时加载的完整 skill 定义。这是 skill 激活时 agent 所看到的指令内容。
+以下是 Chippi 在触发此 skill 时加载的完整 skill 定义。这是 skill 激活时 agent 所看到的指令内容。
 :::
 
 # Kanban Orchestrator — 任务分解手册
@@ -33,7 +33,7 @@ description: "用于通过 Kanban 路由工作的编排器 profile 的任务分�
 
 ## Profile 由用户配置——不是固定名单
 
-Hermes 的配置因人而异。有些用户运行单个 profile 处理所有事务；有些运行小型集群（`docker-worker`、`cron-worker`）；有些运行自己命名的精选专家团队。**没有默认的专家名单**——编排器 skill 不知道此机器上存在哪些 profile。
+Chippi 的配置因人而异。有些用户运行单个 profile 处理所有事务；有些运行小型集群（`docker-worker`、`cron-worker`）；有些运行自己命名的精选专家团队。**没有默认的专家名单**——编排器 skill 不知道此机器上存在哪些 profile。
 
 在扇出之前，你必须基于实际存在的 profile 来制定分解方案。调度器会静默地忽略无法识别的 assignee 名称——它不会自动纠正、不会建议、也不会回退。因此，在只有 `docker-worker` 的配置上，分配给 `researcher` 的卡片会永远停留在 `ready` 状态。
 
@@ -41,7 +41,7 @@ Hermes 的配置因人而异。有些用户运行单个 profile 处理所有事�
 
 使用以下方法之一：
 
-- `hermes profile list` — 打印此机器上已配置的 profile 表。如果有终端工具，通过终端工具运行；否则询问用户。
+- `chippi profile list` — 打印此机器上已配置的 profile 表。如果有终端工具，通过终端工具运行；否则询问用户。
 - `kanban_list(assignee="<some-name>")` — 验证单个名称。对于未知 assignee 返回空列表（而非报错），因此只能确认你已在考虑的名称。
 - **直接询问用户。** 当目标需要多个专家时，"你配置了哪些 profile？"是一个合理的开场问题。
 
@@ -108,7 +108,7 @@ t1 = kanban_create(
     title="research: Postgres cost vs current",
     assignee="<profile-A>",  # whichever profile handles research on this setup
     body="Compare estimated infrastructure costs, migration costs, and ongoing ops costs over a 3-year window. Sources: AWS/GCP pricing, team time estimates, current Postgres bills from peers.",
-    tenant=os.environ.get("HERMES_TENANT"),
+    tenant=os.environ.get("CHIPPI_TENANT"),
 )["task_id"]
 
 t2 = kanban_create(
@@ -164,7 +164,7 @@ kanban_complete(
 > - **T3**（`<profile-B>`）：综合 T1 + T2 生成建议
 > - **T4**（`<profile-C>`）：将 T3 转化为 CTO 备忘录
 >
-> 调度器现在将认领 T1 和 T2。T3 在两者完成后启动。T4 完成时你会收到 gateway 通知。使用仪表板或 `hermes kanban tail <id>` 跟踪进度。
+> 调度器现在将认领 T1 和 T2。T3 在两者完成后启动。T4 完成时你会收到 gateway 通知。使用仪表板或 `chippi kanban tail <id>` 跟踪进度。
 
 ## 常见模式
 
@@ -194,14 +194,14 @@ kanban_complete(
 
 **如果形状取决于中间发现，不要预先创建整个任务图。** 如果 T3 的结构取决于 T1 和 T2 的发现，让 T3 作为一个"综合发现"任务存在，其第一步是读取父任务的交接内容并规划其余部分。编排器可以派生编排器。
 
-**Tenant 继承。** 如果你的环境中设置了 `HERMES_TENANT`，在每次 `kanban_create` 调用中传入 `tenant=os.environ.get("HERMES_TENANT")`，以确保子任务保持在同一命名空间中。
+**Tenant 继承。** 如果你的环境中设置了 `CHIPPI_TENANT`，在每次 `kanban_create` 调用中传入 `tenant=os.environ.get("CHIPPI_TENANT")`，以确保子任务保持在同一命名空间中。
 
 ## 恢复卡住的 worker
 
 当一个 worker profile 持续崩溃、产生幻觉或被自身错误阻塞时（通常是：错误的模型、缺少 skill、凭据损坏），kanban 仪表板会在任务上标记 ⚠ 徽章，并在抽屉中打开**恢复**部分。三个主要操作：
 
-1. **Reclaim**（或 `hermes kanban reclaim <task_id>`）——立即中止正在运行的 worker 并将任务重置为 `ready`。现有认领 TTL 约为 15 分钟；这是最快的解决路径。
-2. **Reassign**（或 `hermes kanban reassign <task_id> <new-profile> --reclaim`）——将任务切换到不同的 profile（此配置上存在的 profile）并让调度器用新 worker 认领它。
-3. **更改 profile 模型**——仪表板会打印 `hermes -p <profile> model` 的复制粘贴提示，因为 profile 配置存储在磁盘上；在终端中编辑它，然后 Reclaim 以使用新模型重试。
+1. **Reclaim**（或 `chippi kanban reclaim <task_id>`）——立即中止正在运行的 worker 并将任务重置为 `ready`。现有认领 TTL 约为 15 分钟；这是最快的解决路径。
+2. **Reassign**（或 `chippi kanban reassign <task_id> <new-profile> --reclaim`）——将任务切换到不同的 profile（此配置上存在的 profile）并让调度器用新 worker 认领它。
+3. **更改 profile 模型**——仪表板会打印 `chippi -p <profile> model` 的复制粘贴提示，因为 profile 配置存储在磁盘上；在终端中编辑它，然后 Reclaim 以使用新模型重试。
 
 当 worker 的 `kanban_complete(created_cards=[...])` 声明包含不存在或非该 worker profile 创建的卡片 id 时（门控会阻止完成），或者自由格式摘要引用了无法解析的 `t_<hex>` id 时（建议性文本扫描，非阻塞），会出现幻觉警告。两者都会产生审计事件，即使在恢复操作后也会持久保存——追踪记录保留用于调试。

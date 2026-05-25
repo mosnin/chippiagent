@@ -24,10 +24,10 @@ import pytest
 
 
 def _make_cli():
-    """Minimal HermesCLI shell exposing prompt/modal helpers."""
+    """Minimal ChippiCLI shell exposing prompt/modal helpers."""
     import cli as cli_mod
 
-    obj = object.__new__(cli_mod.HermesCLI)
+    obj = object.__new__(cli_mod.ChippiCLI)
     obj._app = MagicMock()
     obj._status_bar_visible = True
     obj._last_invalidate = 0.0

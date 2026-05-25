@@ -16,7 +16,7 @@ the two biggest gaps in our browser tooling:
    snapshot but could not click, type, or eval inside them — especially
    cross-origin (OOPIF) iframes that live in separate Chromium processes.
 
-[PR #12550](https://github.com/NousResearch/hermes-agent/pull/12550) proposed a
+[PR #12550](https://github.com/NousResearch/chippi-agent/pull/12550) proposed a
 stateless `browser_dialog` wrapper. That doesn't solve detection — it's a
 cleaner CDP call for when the agent already knows (via symptoms) that a dialog
 is open. Closed as superseded.
@@ -39,7 +39,7 @@ internally and auto-dismisses native dialogs within ~10ms, so
 supervisor injects a bridge script via
 `Page.addScriptToEvaluateOnNewDocument` that overrides
 `window.alert`/`confirm`/`prompt` with a synchronous XHR to a magic host
-(`hermes-dialog-bridge.invalid`). `Fetch.enable` intercepts those XHRs
+(`chippi-dialog-bridge.invalid`). `Fetch.enable` intercepts those XHRs
 before they touch the network — the dialog becomes a `Fetch.requestPaused`
 event the supervisor captures, and `respond_to_dialog` fulfills via
 `Fetch.fulfillRequest` with a JSON body the injected script decodes.
@@ -57,7 +57,7 @@ Camofox stays unsupported for this PR; follow-up upstream issue planned at
 
 ### CDPSupervisor
 
-One `asyncio.Task` running in a background daemon thread per Hermes `task_id`.
+One `asyncio.Task` running in a background daemon thread per Chippi `task_id`.
 Holds a persistent WebSocket to the backend's CDP endpoint. Maintains:
 
 - **Dialog queue** — `List[PendingDialog]` with `{id, type, message, default_prompt, session_id, opened_at}`
@@ -195,13 +195,13 @@ Issue planned against `jo-inc/camofox-browser` adding:
 
 ### Modified
 
-- `toolsets.py` — register `browser_dialog` in `browser`, `hermes-acp`, `hermes-api-server`, core toolsets (gated on CDP reachability)
+- `toolsets.py` — register `browser_dialog` in `browser`, `chippi-acp`, `chippi-api-server`, core toolsets (gated on CDP reachability)
 - `tools/browser_tool.py`
   - `browser_navigate` start-hook: if CDP URL resolvable, `SupervisorRegistry.get_or_start(task_id, cdp_url)`
   - `browser_snapshot` (at ~line 1536): merge supervisor state into return payload
   - `/browser connect` handler: restart supervisor with new endpoint
   - Session teardown hooks in `_cleanup_browser_session`
-- `hermes_cli/config.py` — add `browser.dialog_policy` and `browser.dialog_timeout_s` to `DEFAULT_CONFIG`
+- `chippi_cli/config.py` — add `browser.dialog_policy` and `browser.dialog_timeout_s` to `DEFAULT_CONFIG`
 - Docs: `website/docs/user-guide/features/browser.md`, `website/docs/reference/tools-reference.md`, `website/docs/reference/toolsets-reference.md`
 
 ## Non-goals
