@@ -1,0 +1,8 @@
+{
+  "name": "chippi-analytics",
+  "description": "Get CRM analytics and performance insights from your Chippi data. Weekly reports, conversion rates, and revenue forecasts.",
+  "version": "1.0.0",
+  "author": { "name": "Chippi", "url": "https://usechippi.com" },
+  "homepage": "https://usechippi.com",
+  "keywords": ["crm", "analytics", "reports", "real-estate", "chippi"]
+}

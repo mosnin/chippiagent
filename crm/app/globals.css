@@ -1,0 +1,800 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-subtle: var(--brand-subtle);
+  --color-lead-hot: var(--lead-hot);
+  --color-lead-warm: var(--lead-warm);
+  --color-lead-cold: var(--lead-cold);
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "SF Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  --font-heading: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, "Helvetica Neue", Arial, sans-serif;
+  --font-title: "Times New Roman MT", "Times New Roman", Times, serif;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-card: var(--card-radius);
+}
+
+:root {
+  --radius: 0.75rem;
+  --card-radius: 0.75rem;
+
+  /* Neutral-first palette. Orange is demoted to --brand for rare moments. */
+  --background: #ffffff;
+  --surface: #fafafa;
+  --foreground: #111113;
+
+  --card: #ffffff;
+  --card-foreground: #111113;
+
+  --popover: #ffffff;
+  --popover-foreground: #111113;
+
+  /* Primary is neutral — used for default buttons and emphasis.
+     Orange is NOT primary. It lives on --brand below. */
+  --primary: #111113;
+  --primary-foreground: #ffffff;
+
+  --secondary: #f4f4f5;
+  --secondary-foreground: #111113;
+
+  --muted: #f4f4f5;
+  --muted-foreground: #6b6f76;
+
+  /* Accent = subtle neutral hover surface (previously an orange tint). */
+  --accent: #f4f4f5;
+  --accent-foreground: #111113;
+
+  --destructive: #b91c1c;
+
+  --border: #e7e7e9;
+  --input: #e7e7e9;
+  --ring: rgba(17, 17, 19, 0.12);
+
+  /* Brand — reserved for logo, Chip widget, and the rare "new" flag.
+     Do NOT use as a default UI color. */
+  --brand: #ff964f;
+  --brand-foreground: #ffffff;
+  --brand-subtle: #fff4eb;
+
+  /* Charts: orange demoted to chart-5. Default chart-1 is neutral. */
+  --chart-1: #111113;
+  --chart-2: #3b82f6;
+  --chart-3: #a16207;
+  --chart-4: #b91c1c;
+  --chart-5: #ff964f;
+
+  /* Lead tier — mustard instead of amber to stop collision with brand. */
+  --lead-hot: #b91c1c;
+  --lead-warm: #a16207;
+  --lead-cold: #1d4ed8;
+
+  --sidebar: #ffffff;
+  --sidebar-foreground: #111113;
+  --sidebar-primary: #111113;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #f4f4f5;
+  --sidebar-accent-foreground: #111113;
+  --sidebar-border: #e7e7e9;
+  --sidebar-ring: rgba(17, 17, 19, 0.12);
+}
+
+.dark {
+  --background: #0c0c0d;
+  --surface: #151517;
+  --foreground: #f1f3f5;
+
+  --card: #151517;
+  --card-foreground: #f1f3f5;
+
+  --popover: #151517;
+  --popover-foreground: #f1f3f5;
+
+  /* Primary inverts — light pill on dark surface. Not orange. */
+  --primary: #f1f3f5;
+  --primary-foreground: #0c0c0d;
+
+  --secondary: #1f2023;
+  --secondary-foreground: #e5e7eb;
+
+  --muted: #1f2023;
+  --muted-foreground: #9ca3af;
+
+  --accent: #1f2023;
+  --accent-foreground: #f1f3f5;
+
+  --destructive: #ef4444;
+
+  --border: #27272a;
+  --input: #27272a;
+  --ring: rgba(241, 243, 245, 0.15);
+
+  --brand: #ff964f;
+  --brand-foreground: #ffffff;
+  --brand-subtle: #2a1f17;
+
+  --chart-1: #f1f3f5;
+  --chart-2: #94a3b8;
+  --chart-3: #c2935c;
+  --chart-4: #f87171;
+  --chart-5: #ff964f;
+
+  --lead-hot: #f87171;
+  --lead-warm: #c2935c;
+  --lead-cold: #94a3b8;
+
+  --sidebar: #151517;
+  --sidebar-foreground: #f1f3f5;
+  --sidebar-primary: #f1f3f5;
+  --sidebar-primary-foreground: #0c0c0d;
+  --sidebar-accent: #1f2023;
+  --sidebar-accent-foreground: #f1f3f5;
+  --sidebar-border: #27272a;
+  --sidebar-ring: rgba(241, 243, 245, 0.15);
+}
+
+/* ── App theme: cooler off-white canvas, white sidebar, neutral accents ── */
+.app-theme {
+  --background: #fafafa;
+  --surface: #f4f4f5;
+  --foreground: #111113;
+
+  --card: #ffffff;
+  --card-foreground: #111113;
+
+  --popover: #ffffff;
+  --popover-foreground: #111113;
+
+  --primary: #111113;
+  --primary-foreground: #ffffff;
+
+  --secondary: #f0f0f1;
+  --secondary-foreground: #111113;
+
+  --muted: #f0f0f1;
+  --muted-foreground: #6b6f76;
+
+  --accent: #f0f0f1;
+  --accent-foreground: #111113;
+
+  --destructive: #b91c1c;
+
+  --border: #e7e7e9;
+  --input: #e7e7e9;
+  --ring: rgba(17, 17, 19, 0.12);
+
+  --brand: #ff964f;
+  --brand-foreground: #ffffff;
+  --brand-subtle: #fff4eb;
+
+  --sidebar: #ffffff;
+  --sidebar-foreground: #111113;
+  --sidebar-primary: #111113;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #f0f0f1;
+  --sidebar-accent-foreground: #111113;
+  --sidebar-border: #e7e7e9;
+  --sidebar-ring: rgba(17, 17, 19, 0.12);
+}
+.dark .app-theme,
+.app-theme.dark {
+  --background: #0c0c0d;
+  --surface: #151517;
+  --foreground: #f1f3f5;
+
+  --card: #151517;
+  --card-foreground: #f1f3f5;
+
+  --popover: #151517;
+  --popover-foreground: #f1f3f5;
+
+  --primary: #f1f3f5;
+  --primary-foreground: #0c0c0d;
+
+  --secondary: #1f2023;
+  --secondary-foreground: #e5e7eb;
+
+  --muted: #1f2023;
+  --muted-foreground: #9ca3af;
+
+  --accent: #1f2023;
+  --accent-foreground: #f1f3f5;
+
+  --destructive: #ef4444;
+
+  --border: #27272a;
+  --input: #27272a;
+  --ring: rgba(241, 243, 245, 0.15);
+
+  --brand: #ff964f;
+  --brand-foreground: #ffffff;
+  --brand-subtle: #2a1f17;
+
+  --sidebar: #151517;
+  --sidebar-foreground: #f1f3f5;
+  --sidebar-primary: #f1f3f5;
+  --sidebar-primary-foreground: #0c0c0d;
+  --sidebar-accent: #1f2023;
+  --sidebar-accent-foreground: #f1f3f5;
+  --sidebar-border: #27272a;
+  --sidebar-ring: rgba(241, 243, 245, 0.15);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-heading);
+  }
+}
+
+/* ── Dashboard content padding ──────────────────────────────────────────
+   Defensive horizontal padding on every dashboard page wrapper. The layout
+   sets `px-4 sm:px-6 md:px-10 lg:px-12` via Tailwind classes, but a recent
+   regression had pages rendering edge-to-edge on mobile — the padding
+   utility wasn't reaching the rendered DOM. This class duplicates the
+   intent in raw CSS so the build can't drop it. Apply via the
+   `dashboard-content` class on the wrapper that holds page children. */
+.dashboard-content {
+  padding-left: 1rem;
+  padding-right: 1rem;
+  padding-top: 1.25rem;
+  padding-bottom: 10rem;
+}
+@media (min-width: 640px) {
+  .dashboard-content {
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+  }
+}
+@media (min-width: 768px) {
+  .dashboard-content {
+    padding-left: 2.5rem;
+    padding-right: 2.5rem;
+    padding-top: 1.75rem;
+    padding-bottom: 6rem;
+  }
+}
+@media (min-width: 1024px) {
+  .dashboard-content {
+    padding-left: 3rem;
+    padding-right: 3rem;
+  }
+}
+
+.dashboard-footer-wrap {
+  padding-left: 1rem;
+  padding-right: 1rem;
+  padding-bottom: 1rem;
+}
+@media (min-width: 640px) {
+  .dashboard-footer-wrap {
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+  }
+}
+@media (min-width: 768px) {
+  .dashboard-footer-wrap {
+    padding-left: 2.5rem;
+    padding-right: 2.5rem;
+  }
+}
+@media (min-width: 1024px) {
+  .dashboard-footer-wrap {
+    padding-left: 3rem;
+    padding-right: 3rem;
+  }
+}
+
+/* Chippi chat surface — same defensive pattern. The chat workspace's
+   inner content wrappers have `px-4 sm:px-6` but production showed the
+   composer overflowing the right edge on mobile. Explicit raw CSS class. */
+.chat-content-wrap {
+  padding-left: 1rem;
+  padding-right: 1rem;
+}
+@media (min-width: 640px) {
+  .chat-content-wrap {
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+  }
+}
+
+/* ── Clerk component overrides ──────────────────────
+   Paper-flat: rounded-md, h-9, foreground primary (no orange),
+   border-border/70, no shadows, no chunky borders. Drives the
+   look of the Clerk-rendered SignIn / SignUp inside auth-page-layout. */
+.cl-rootBox {
+  width: 100%;
+  overflow: visible !important;
+}
+.cl-internal-b3fm6y,
+.cl-formField {
+  overflow: visible !important;
+}
+.cl-card,
+.cl-cardBox {
+  background: transparent !important;
+  box-shadow: none !important;
+  border: none !important;
+  padding: 0 !important;
+  width: 100% !important;
+  overflow: visible !important;
+}
+.cl-main {
+  overflow: visible !important;
+}
+.cl-form {
+  overflow: visible !important;
+}
+.cl-header {
+  display: none !important;
+}
+/* OAuth provider buttons (Google, etc.) — paper-flat, no chunky border. */
+.cl-socialButtonsBlockButton {
+  border: 1px solid var(--border) !important;
+  background: transparent !important;
+  border-radius: 0.375rem !important;
+  box-shadow: none !important;
+  height: 2.25rem !important;
+  font-size: 0.875rem !important;
+  font-weight: 500 !important;
+  color: var(--foreground) !important;
+  transition: background-color 0.15s ease !important;
+}
+.cl-socialButtonsBlockButton:hover {
+  background: rgba(17, 17, 19, 0.04) !important;
+}
+.cl-dividerLine {
+  background: var(--border) !important;
+}
+.cl-dividerText {
+  color: var(--muted-foreground) !important;
+  font-size: 0.75rem !important;
+}
+.cl-formFieldLabel {
+  font-size: 0.875rem !important;
+  font-weight: 500 !important;
+  color: var(--foreground) !important;
+}
+/* Inputs — paper-flat, focus ring is foreground (no orange). */
+.cl-formFieldInput {
+  border: 1px solid var(--border) !important;
+  background: var(--background) !important;
+  border-radius: 0.375rem !important;
+  box-shadow: none !important;
+  height: 2.25rem !important;
+  padding: 0 0.75rem !important;
+  font-size: 0.875rem !important;
+  color: var(--foreground) !important;
+}
+.cl-formFieldInput__emailAddress,
+.cl-formFieldInput__password,
+.cl-formFieldInput__phoneNumber,
+.cl-formFieldInput__identifier {
+  border-radius: 0.375rem !important;
+}
+.cl-formFieldRow {
+  border-radius: 0.375rem !important;
+}
+.cl-formFieldInput:focus {
+  border-color: rgba(17, 17, 19, 0.3) !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+/* Primary button — pill, foreground bg, no orange, no shadow. */
+.cl-formButtonPrimary {
+  background: var(--foreground) !important;
+  color: var(--background) !important;
+  border: none !important;
+  border-radius: 9999px !important;
+  box-shadow: none !important;
+  height: 2.25rem !important;
+  padding: 0 1rem !important;
+  font-weight: 500 !important;
+  font-size: 0.875rem !important;
+  transition: background-color 0.15s ease, transform 0.15s ease !important;
+}
+.cl-formButtonPrimary:hover {
+  background: rgba(17, 17, 19, 0.9) !important;
+  opacity: 1 !important;
+}
+.cl-formButtonPrimary:active {
+  transform: scale(0.98) !important;
+}
+.cl-footerAction {
+  background: transparent !important;
+}
+.cl-footerActionLink {
+  color: var(--muted-foreground) !important;
+  font-weight: 500 !important;
+  text-decoration: underline !important;
+  text-underline-offset: 4px !important;
+  transition: color 0.15s ease !important;
+}
+.cl-footerActionLink:hover {
+  color: var(--foreground) !important;
+}
+.cl-footerActionText {
+  color: var(--muted-foreground) !important;
+  font-size: 0.875rem !important;
+}
+.cl-footer {
+  display: none !important;
+}
+.cl-identityPreview {
+  border: 1px solid var(--border) !important;
+  border-radius: 0.375rem !important;
+  background: var(--background) !important;
+  box-shadow: none !important;
+}
+.cl-alternativeMethodsBlockButton {
+  border: 1px solid var(--border) !important;
+  border-radius: 0.375rem !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  height: 2.25rem !important;
+  font-size: 0.875rem !important;
+  color: var(--foreground) !important;
+}
+.cl-alternativeMethodsBlockButton:hover {
+  background: rgba(17, 17, 19, 0.04) !important;
+}
+.cl-otpCodeFieldInput {
+  border: 1px solid var(--border) !important;
+  border-radius: 0.375rem !important;
+  box-shadow: none !important;
+  background: var(--background) !important;
+  color: var(--foreground) !important;
+}
+.cl-formFieldErrorText {
+  color: #be123c !important; /* rose-700 */
+  font-size: 0.75rem !important;
+}
+.cl-alert {
+  border: 1px solid rgba(190, 18, 60, 0.2) !important;
+  background: rgba(190, 18, 60, 0.05) !important;
+  color: #be123c !important;
+  border-radius: 0.375rem !important;
+  box-shadow: none !important;
+}
+/* Dark mode overrides */
+.dark .cl-socialButtonsBlockButton {
+  color: var(--foreground) !important;
+}
+.dark .cl-socialButtonsBlockButton:hover {
+  background: rgba(241, 243, 245, 0.04) !important;
+}
+.dark .cl-formFieldInput:focus {
+  border-color: rgba(241, 243, 245, 0.3) !important;
+  box-shadow: none !important;
+}
+.dark .cl-formButtonPrimary:hover {
+  background: rgba(241, 243, 245, 0.9) !important;
+}
+.dark .cl-formFieldErrorText {
+  color: #fb7185 !important; /* rose-400 */
+}
+.dark .cl-alert {
+  border: 1px solid rgba(251, 113, 133, 0.25) !important;
+  background: rgba(251, 113, 133, 0.08) !important;
+  color: #fb7185 !important;
+}
+
+/* ── Scrollbar utilities ──────────────────────────── */
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+/* ── Card elevation system ─────────────────────────── */
+[data-slot="card"] {
+  box-shadow: 0 1px 2px 0 rgba(0,0,0,0.03);
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+.dark [data-slot="card"] {
+  box-shadow: 0 1px 3px 0 rgba(0,0,0,0.2);
+}
+
+/* Lead card with new-lead accent — one of the rare brand moments */
+.lead-card-new {
+  border-left: 2px solid var(--brand) !important;
+}
+
+/* Emoji picker */
+.emoji-picker-container .epr-body::-webkit-scrollbar { width: 8px; }
+.emoji-picker-container .epr-body::-webkit-scrollbar-track { background: var(--background); }
+.emoji-picker-container .epr-body::-webkit-scrollbar-thumb {
+  background-color: var(--muted);
+  border-radius: 20px;
+}
+.emoji-picker-container .epr-body::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in oklab, var(--muted-foreground), transparent 50%);
+}
+.emoji-picker-container .epr-category-nav { padding: 8px 0; }
+.emoji-picker-container .epr-header { border-bottom: 1px solid var(--border); }
+.emoji-picker-container .epr-emoji-category-label {
+  background-color: var(--background);
+  font-size: 0.875rem;
+  color: var(--muted-foreground);
+  padding: 4px 8px;
+}
+.emoji-picker-container .epr-search {
+  margin: 8px;
+  border-radius: var(--radius);
+  border: 1px solid var(--input);
+  background-color: var(--background);
+}
+.emoji-picker-container .epr-search input {
+  border-radius: var(--radius);
+  background-color: transparent;
+  color: var(--foreground);
+}
+.emoji-picker-container .epr-emoji-category-content { padding: 4px; }
+.emoji-picker-container .epr-body { padding: 0; }
+.emoji-picker-container .epr-skin-tones { border-radius: var(--radius); }
+.emoji-picker-container button.epr-emoji { border-radius: var(--radius); }
+.emoji-picker-container button.epr-emoji:hover { background-color: var(--accent); }
+.emoji-picker-container .epr-category-nav button { opacity: 0.5; }
+.emoji-picker-container .epr-category-nav button.active { opacity: 1; }
+.emoji-picker-container .epr-category-nav button:hover { opacity: 0.8; }
+
+@layer utilities {
+  .text-lead-hot { color: var(--lead-hot); }
+  .text-lead-warm { color: var(--lead-warm); }
+  .text-lead-cold { color: var(--lead-cold); }
+  .bg-surface { background-color: var(--surface); }
+
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+}
+
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.marquee-track { overflow: hidden; white-space: nowrap; }
+.marquee-content {
+  display: inline-flex;
+  gap: 0.75rem;
+  padding-inline: 1.5rem;
+  animation: marquee 30s linear infinite;
+}
+.marquee-track:hover .marquee-content { animation-play-state: paused; }
+
+@keyframes animation-path {
+  0% {
+    offset-distance: 0%;
+  }
+  100% {
+    offset-distance: 100%;
+  }
+}
+
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * AI loader — used by voice-mode + any "Chippi is generating" surface.
+ * Orange-themed (Chippi brand-warm) variant of the rotating gradient + letter
+ * pulse pattern. Box-shadow stops cycle through warm tones; letters fade and
+ * scale slightly to add a typewriter-meets-breath feel.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+@keyframes loader-rotate {
+  0% {
+    transform: rotate(90deg);
+    box-shadow: 0 10px 20px 0 var(--background) inset,
+      0 20px 30px 0 #fdba74 inset,
+      0 60px 60px 0 #c2410c inset;
+  }
+  50% {
+    transform: rotate(270deg);
+    box-shadow: 0 10px 20px 0 var(--background) inset,
+      0 20px 10px 0 #fb923c inset,
+      0 40px 60px 0 #9a3412 inset;
+  }
+  100% {
+    transform: rotate(450deg);
+    box-shadow: 0 10px 20px 0 var(--background) inset,
+      0 20px 30px 0 #fdba74 inset,
+      0 60px 60px 0 #c2410c inset;
+  }
+}
+
+/* Dark mode — slightly cooler, less-saturated stops so the ring doesn't bloom
+   against the near-black voice-mode backdrop. */
+@keyframes loader-rotate-dark {
+  0% {
+    transform: rotate(90deg);
+    box-shadow: 0 10px 20px 0 var(--background) inset,
+      0 20px 30px 0 #fb923c inset,
+      0 60px 60px 0 #9a3412 inset;
+  }
+  50% {
+    transform: rotate(270deg);
+    box-shadow: 0 10px 20px 0 var(--background) inset,
+      0 20px 10px 0 #f97316 inset,
+      0 40px 60px 0 #7c2d12 inset;
+  }
+  100% {
+    transform: rotate(450deg);
+    box-shadow: 0 10px 20px 0 var(--background) inset,
+      0 20px 30px 0 #fb923c inset,
+      0 60px 60px 0 #9a3412 inset;
+  }
+}
+
+@keyframes loader-letter-anim {
+  0%,
+  100% {
+    opacity: 0.4;
+    transform: translateY(0);
+  }
+  20% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+  40% {
+    opacity: 0.7;
+    transform: translateY(0);
+  }
+}
+
+.ai-loader-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 8rem;
+  height: 8rem;
+  font-family: var(--font-title), serif;
+}
+.ai-loader-letter {
+  display: inline-block;
+  opacity: 0.4;
+  font-size: 0.875rem;
+  letter-spacing: 0.08em;
+  color: hsl(var(--foreground));
+  animation: loader-letter-anim 2s infinite;
+  z-index: 1;
+}
+.ai-loader-letter:nth-child(1)  { animation-delay: 0s; }
+.ai-loader-letter:nth-child(2)  { animation-delay: 0.1s; }
+.ai-loader-letter:nth-child(3)  { animation-delay: 0.2s; }
+.ai-loader-letter:nth-child(4)  { animation-delay: 0.3s; }
+.ai-loader-letter:nth-child(5)  { animation-delay: 0.4s; }
+.ai-loader-letter:nth-child(6)  { animation-delay: 0.5s; }
+.ai-loader-letter:nth-child(7)  { animation-delay: 0.6s; }
+.ai-loader-letter:nth-child(8)  { animation-delay: 0.7s; }
+.ai-loader-letter:nth-child(9)  { animation-delay: 0.8s; }
+.ai-loader-letter:nth-child(10) { animation-delay: 0.9s; }
+.ai-loader-letter:nth-child(11) { animation-delay: 1.0s; }
+
+.ai-loader {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  margin: auto;
+  width: 6rem;
+  height: 6rem;
+  border-radius: 50%;
+  animation: loader-rotate 2s linear infinite;
+}
+.dark .ai-loader {
+  animation-name: loader-rotate-dark;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-loader { animation: none; }
+  .ai-loader-letter { animation: none; opacity: 0.7; }
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Chippi thinking shimmer — used by the chat transcript while the agent is
+ * spinning up or between tool calls. Plays through the muted→foreground→
+ * muted gradient so the word "Thinking" reads as alive but calm.
+ * ────────────────────────────────────────────────────────────────────────── */
+@keyframes chippi-thinking-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.chippi-thinking-shimmer {
+  /* A bright wedge sweeps across the muted base. Foreground colors come
+     from CSS vars so dark mode flips automatically. The 200% bg-size lets
+     the keyframe push the highlight cleanly off both edges. */
+  background-image: linear-gradient(
+    100deg,
+    var(--muted-foreground) 0%,
+    var(--muted-foreground) 38%,
+    var(--foreground) 50%,
+    var(--muted-foreground) 62%,
+    var(--muted-foreground) 100%
+  );
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  /* 2.4s = calm. ease-in-out softens the turnaround so it never reads jittery. */
+  animation: chippi-thinking-shimmer 2.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chippi-thinking-shimmer {
+    animation: none;
+    background-position: 0 0;
+  }
+  /* Legacy inline-style selector kept for any old callsites. */
+  [style*="chippi-thinking-shimmer"] { animation: none !important; background-position: 0 0 !important; }
+}
+
+/* ── Chippi streaming cursor ────────────────────────────────────────────────
+ * step-start keeps the blink hard-edged (typewriter), not a gentle fade.
+ * 0.9s is slightly irregular against the LLM token cadence so they don't
+ * cancel each other out visually. */
+@keyframes chippi-cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+.chippi-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 0.9em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: currentColor;
+  animation: chippi-cursor-blink 0.9s step-start infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chippi-cursor { animation: none; opacity: 1; }
+}

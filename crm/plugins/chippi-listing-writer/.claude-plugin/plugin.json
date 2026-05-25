@@ -1,0 +1,8 @@
+{
+  "name": "chippi-listing-writer",
+  "description": "Generate property listing copy, social media posts, and email campaigns using your Chippi deal data.",
+  "version": "1.0.0",
+  "author": { "name": "Chippi", "url": "https://usechippi.com" },
+  "homepage": "https://usechippi.com",
+  "keywords": ["crm", "listings", "marketing", "real-estate", "chippi"]
+}

@@ -1,0 +1,44 @@
+-- Per-draft outcome attribution on AgentDraft.
+--
+-- Phase 12 added `feedback_action` etc., which measures *input quality* — did
+-- the realtor approve the draft, edit it, or reject it. That tells us whether
+-- the draft was good enough to send. It doesn't tell us whether sending it
+-- did anything.
+--
+-- This phase closes the loop. After a draft is sent and the deal has had a
+-- day to move, a cron runs and labels the draft with the outcome we can
+-- actually observe today:
+--
+--   'deal_advanced' — the linked Deal's stage advanced after the draft sent
+--                     (i.e. Deal.stageChangedAt > AgentDraft.updatedAt) AND
+--                     the deal isn't in a terminal-kind stage. Best proxy
+--                     we can compute. Does NOT prove causation; multiple
+--                     drafts can fire near a single stage advance, and the
+--                     realtor can advance by hand. Treat as correlation.
+--   'none'         — no observable advance. Either the deal didn't move,
+--                     the draft has no dealId, the deal is gone, or the
+--                     deal is already terminal-stage.
+--   NULL           — not yet checked (default).
+--
+-- We deliberately do NOT add 'reply_received' here. Inbound email/SMS
+-- ingestion doesn't exist in the platform yet; a half-implemented enum
+-- value is worse than no value.
+--
+-- We deliberately do NOT add a `sent_at` column. The "draft was sent" timestamp
+-- is already captured as `updatedAt` while `status = 'sent'` (set in the
+-- approve/dismiss PATCH route). Adding a redundant column would force two
+-- writes to stay in sync.
+--
+-- Index strategy: the daily scan filters by `status = 'sent' AND
+-- outcome_signal IS NULL AND updatedAt BETWEEN now-8d AND now-1d`. The
+-- existing `AgentDraft_spaceId_status_idx` (on spaceId, status, createdAt)
+-- already narrows by status; the cron is daily, the window is 7 days, the
+-- batch cap is 200, and AgentDraft volume per space is in the hundreds of
+-- rows per month. Adding another partial index is premature. If scan
+-- latency ever shows up in production, revisit then.
+--
+-- Idempotent: IF NOT EXISTS guards. Safe to re-run.
+
+ALTER TABLE "AgentDraft"
+  ADD COLUMN IF NOT EXISTS "outcome_signal"     TEXT,
+  ADD COLUMN IF NOT EXISTS "outcome_checked_at" TIMESTAMPTZ;

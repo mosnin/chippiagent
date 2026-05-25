@@ -1,0 +1,92 @@
+name: Agent Evals
+
+# Runs the chat-agent eval suite. The suite makes real OpenAI calls
+# (~$0.30 a run, ~30s) so it stays gated behind RUN_EVALS=1.
+#
+# Three triggers:
+#   - Nightly cron — catches model-side drift (gpt-5-mini behavior change
+#     without a prompt change on our side).
+#   - PR — gated to PRs that touch the prompt assembly surface (the
+#     primary regression risk on our side). Cost-bounded by the path
+#     filter; non-prompt PRs don't trigger.
+#   - Manual workflow_dispatch — ad-hoc runs after a prompt change.
+#
+# Failures are signal, not enforcement. The workflow is allowed to fail
+# without blocking PRs; the point is the alert when tool-pick judgment
+# drifts. Treat it like a smoke alarm.
+#
+# KNOWN GAP: this eval runs the TypeScript in-process runtime (the chat
+# fallback path, lib/ai-tools/sdk-chat.ts). It does NOT cover the Python
+# Modal runtime which is what production actually runs. The Python eval
+# harness is a separate, larger build — for now this catches TS-fallback
+# regressions and gives early signal on prompt-shape changes that affect
+# both runtimes (system prompt copy, tool descriptions).
+
+on:
+  schedule:
+    # 02:30 UTC daily. After most US contributors are done pushing for
+    # the day so a flaky nightly doesn't burn the next morning.
+    - cron: '30 2 * * *'
+  pull_request:
+    # Only run on PRs that touch prompt-assembly or tool-definition code
+    # so cost stays bounded. Non-prompt PRs don't trigger the eval.
+    paths:
+      - 'agent/chippi.py'
+      - 'agent/orchestrator.py'
+      - 'agent/tools/**'
+      - 'lib/ai.ts'
+      - 'lib/ai-tools/system-prompt.ts'
+      - 'lib/ai-tools/tools/**'
+      - 'lib/ai-tools/sdk-chat.ts'
+      - 'lib/ai-tools/sdk-bridge.ts'
+      - 'tests/evals/**'
+      - '.github/workflows/agent-evals.yml'
+  workflow_dispatch:
+    # Manual trigger for ad-hoc runs (e.g. after a prompt change).
+    inputs:
+      ref:
+        description: 'Branch or SHA to eval'
+        required: false
+        default: 'main'
+
+concurrency:
+  group: agent-evals-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Skip the run if OPENAI_API_KEY isn't configured on the repo — better
+    # to no-op than fail with a misleading "auth error" message.
+    if: ${{ vars.AGENT_EVALS_ENABLED == 'true' || github.event_name == 'workflow_dispatch' }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Run agent evals
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          RUN_EVALS: '1'
+        run: pnpm eval
+
+      - name: Upload eval log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-eval-log
+          path: eval-output.log
+          if-no-files-found: ignore
+          retention-days: 14
