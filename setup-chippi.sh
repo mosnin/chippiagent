@@ -1,8 +1,11 @@
 #!/bin/bash
 # ============================================================================
-# Chippi Agent Setup Script
+# Chippi Setup Script — agentic OS for U.S. real estate professionals
 # ============================================================================
-# Quick setup for developers who cloned the repo manually.
+# Quick setup for developers who cloned the repo manually. This installs
+# ONLY the Python agent framework. The Next.js CRM lives in `crm/` and has
+# its own setup (`cd crm && pnpm install`).
+#
 # Uses uv for desktop/server setup and Python's stdlib venv + pip on Termux.
 #
 # Usage:
@@ -56,7 +59,9 @@ get_command_link_display_dir() {
 }
 
 echo ""
-echo -e "${CYAN}⚕ Chippi Agent Setup${NC}"
+echo -e "${CYAN}⚕ Chippi Setup — agentic OS for U.S. real estate professionals${NC}"
+echo -e "${CYAN}  Installing the Python agent framework. The Next.js CRM lives in${NC}"
+echo -e "${CYAN}  ./crm/ and has separate setup: cd crm && pnpm install${NC}"
 echo ""
 
 # ============================================================================
@@ -450,6 +455,9 @@ else
 fi
 echo "  chippi cron list     # View scheduled jobs"
 echo "  chippi doctor        # Diagnose issues"
+echo ""
+echo "CRM (Next.js dashboard, separate setup):"
+echo "  cd crm && pnpm install && pnpm dev"
 echo ""
 
 # Ask if they want to run setup wizard now

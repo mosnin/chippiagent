@@ -1,0 +1,8 @@
+{
+  "name": "chippi-lead-manager",
+  "description": "Manage your rental leads from Claude. View hot leads, check follow-ups, and add new leads using your Chippi CRM data.",
+  "version": "1.0.0",
+  "author": { "name": "Chippi", "url": "https://usechippi.com" },
+  "homepage": "https://usechippi.com",
+  "keywords": ["crm", "leads", "real-estate", "chippi"]
+}

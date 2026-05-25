@@ -1,0 +1,8 @@
+{
+  "name": "chippi-deal-tracker",
+  "description": "Track your rental deal pipeline from Claude. View deals by stage, check pipeline value, and monitor deal progress.",
+  "version": "1.0.0",
+  "author": { "name": "Chippi", "url": "https://usechippi.com" },
+  "homepage": "https://usechippi.com",
+  "keywords": ["crm", "deals", "pipeline", "real-estate", "chippi"]
+}

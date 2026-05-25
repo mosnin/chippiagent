@@ -1,5 +1,10 @@
 """Windows UTF-8 bootstrap for Chippi entry points.
 
+Chippi is the agentic OS for U.S. real estate professionals. This module
+fixes Windows-specific text-encoding issues for the agent framework's
+entry points only — the Next.js CRM in ``crm/`` has its own runtime.
+
+
 Python on Windows has two long-standing text-encoding footguns:
 
 1. ``sys.stdout`` / ``sys.stderr`` are bound to the console code page

@@ -1,0 +1,8 @@
+{
+  "name": "chippi-tour-assistant",
+  "description": "Prepare for property tours with your Chippi data. Get tour schedules, prep sheets, and post-tour follow-up guidance.",
+  "version": "1.0.0",
+  "author": { "name": "Chippi", "url": "https://usechippi.com" },
+  "homepage": "https://usechippi.com",
+  "keywords": ["crm", "tours", "real-estate", "chippi"]
+}

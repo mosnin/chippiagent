@@ -1,201 +1,171 @@
 <p align="center">
-  <img src="assets/banner.png" alt="Chippi Agent" width="100%">
+  <img src="assets/banner.png" alt="Chippi" width="100%">
 </p>
 
-# Chippi Agent ☤
+# Chippi
 
 <p align="center">
-  <a href="https://chippi-agent.nousresearch.com/docs/"><img src="https://img.shields.io/badge/Docs-chippi--agent.nousresearch.com-FFD700?style=for-the-badge" alt="Documentation"></a>
-  <a href="https://discord.gg/NousResearch"><img src="https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord"></a>
-  <a href="https://github.com/NousResearch/chippi-agent/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
-  <a href="https://nousresearch.com"><img src="https://img.shields.io/badge/Built%20by-Nous%20Research-blueviolet?style=for-the-badge" alt="Built by Nous Research"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Proprietary-black?style=for-the-badge" alt="License"></a>
+  <a href="crm/"><img src="https://img.shields.io/badge/Web-Next.js%2015-000?style=for-the-badge&logo=nextdotjs&logoColor=white" alt="Next.js 15"></a>
+  <a href="pyproject.toml"><img src="https://img.shields.io/badge/Agent-Python%203.11-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11"></a>
   <a href="README.md"><img src="https://img.shields.io/badge/Lang-English-lightgrey?style=for-the-badge" alt="English"></a>
 </p>
 
-**由 [Nous Research](https://nousresearch.com) 构建的自进化 AI 代理。** 它是唯一内置学习闭环的智能代理——从经验中创建技能，在使用中改进技能，主动持久化知识，搜索过往对话，并在跨会话中逐步构建对你的深度理解。可以在 $5 的 VPS 上运行，也可以在 GPU 集群上运行，或者使用几乎零成本的 Serverless 基础设施。它不绑定你的笔记本——你可以在 Telegram 上与它对话，而它在云端 VM 上工作。
+**面向美国房产经纪人与经纪公司的智能代理操作系统。**
 
-支持任意模型——[Nous Portal](https://portal.nousresearch.com)、[OpenRouter](https://openrouter.ai)（200+ 模型）、[NVIDIA NIM](https://build.nvidia.com)（Nemotron）、[小米 MiMo](https://platform.xiaomimimo.com)、[z.ai/GLM](https://z.ai)、[Kimi/Moonshot](https://platform.moonshot.ai)、[MiniMax](https://www.minimax.io)、[Hugging Face](https://huggingface.co)、OpenAI，或自定义端点。使用 `chippi model` 即可切换——无需改代码，无锁定。
+经纪人的客户簿——联系人、线索、交易、看房、房源、申请——就是工作空间。Chippi 是一个自主 AI 代理，在这个工作空间里替经纪人干活:筛选入站线索、起草并发送跟进、安排看房、推进交易、生产营销内容、并把真正需要关注的事浮出来。只在必须由人做决定的地方,才请求确认。
+
+产品就是这个代理。底层那些 CRM 风格的数据——联系人、交易、管道——是基底,不是产品。Chippi 不是一个让经纪人去维护的数据库;它是替经纪人维护数据库的操作员。
+
+---
+
+## 两个入口,一个代理
+
+Chippi 以两种方式运行,二者共享同一份工作空间状态、记忆和工具:
+
+| 入口 | 是什么 |
+|------|--------|
+| **对话** | 经纪人和 Chippi 对话——通过网页应用,通过 Telegram、Slack、Discord、WhatsApp、Signal,或者 CLI。Chippi 把事干完然后汇报。 |
+| **自主** | 工作空间事件(新线索、申请提交、看房结束、交易阶段变更、入站消息)和定时巡检会近实时唤醒 Chippi,无需任何人开口。 |
+
+所有变更动作都需要审批。Chippi 起草;它不会默默发送。
+
+---
+
+## Chippi 能做什么
+
+能力快照——按类别列,非穷举。完整的产品蓝图见 [`crm/PRODUCT_SCOPE.md`](crm/PRODUCT_SCOPE.md) 和 [`crm/ARCHITECTURE.md`](crm/ARCHITECTURE.md)。
 
 <table>
-<tr><td><b>真正的终端界面</b></td><td>完整的 TUI，支持多行编辑、斜杠命令自动补全、对话历史、中断重定向和流式工具输出。</td></tr>
-<tr><td><b>随你所在</b></td><td>Telegram、Discord、Slack、WhatsApp、Signal 和 CLI——全部从单个网关进程运行。语音备忘录转写、跨平台对话连续性。</td></tr>
-<tr><td><b>闭环学习</b></td><td>代理管理记忆并定期自我提醒。复杂任务后自动创建技能。技能在使用中自我改进。FTS5 会话搜索配合 LLM 摘要实现跨会话回溯。<a href="https://github.com/plastic-labs/honcho">Honcho</a> 辩证式用户建模。兼容 <a href="https://agentskills.io">agentskills.io</a> 开放标准。</td></tr>
-<tr><td><b>定时自动化</b></td><td>内置 cron 调度器，支持向任何平台投递。日报、夜间备份、周审计——全部用自然语言描述，无人值守运行。</td></tr>
-<tr><td><b>委派与并行</b></td><td>生成隔离子代理处理并行工作流。编写 Python 脚本通过 RPC 调用工具，将多步管道压缩为零上下文开销的轮次。</td></tr>
-<tr><td><b>随处运行</b></td><td>六种终端后端——本地、Docker、SSH、Daytona、Singularity 和 Modal。Daytona 和 Modal 提供 Serverless 持久化——代理环境空闲时休眠、按需唤醒，空闲期间几乎零成本。$5 VPS 或 GPU 集群都能跑。</td></tr>
-<tr><td><b>研究就绪</b></td><td>批量轨迹生成、轨迹压缩——用于训练下一代工具调用模型。</td></tr>
+<tr><td><b>线索摄取</b></td><td>带品牌的、可定制的、对话式申请页面。租赁和购房分流。每位经纪人一条可分享的摄取链接。</td></tr>
+<tr><td><b>可解释的线索评分</b></td><td>每条线索都有分数、冷/热/温分级,以及一段普通人能读懂的理由。没有"AI 黑魔法"。</td></tr>
+<tr><td><b>线索 → 联系人 → 交易管道</b></td><td>作为基底的 CRM,支持自定义阶段。看板视图、拖拽、交易评审。</td></tr>
+<tr><td><b>看房</b></td><td>排程、公开预约页、日历同步、确认、提醒、看房后反馈。</td></tr>
+<tr><td><b>房源</b></td><td>挂牌房源和可分享的房源资料包。</td></tr>
+<tr><td><b>经纪公司层</b></td><td>团队成员、邀请、跨经纪人的线索分发、佣金账本、交易评审、排行榜、审计日志。基于 Stripe 的按席位计费。</td></tr>
+<tr><td><b>工作室</b></td><td>AI 图像与视频生成、品牌套件、社交内容编辑器、排期发布。</td></tr>
+<tr><td><b>集成</b></td><td>已连接的工具包(Gmail、HubSpot、Slack、Google Calendar)直接变成代理工具。Chippi 也以 MCP 服务器形式对外暴露。</td></tr>
+<tr><td><b>通知</b></td><td>邮件(Resend)与短信(Telnyx),覆盖线索、看房、交易、跟进。</td></tr>
+<tr><td><b>分析</b></td><td>管道、线索、看房、表单流量、团队业绩。</td></tr>
 </table>
 
 ---
 
-## 快速安装
+## 服务对象
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/NousResearch/chippi-agent/main/scripts/install.sh | bash
+- **独立和自雇经纪人** —— Chippi 端到端跑完线索管道。
+- **经纪公司** —— 公司老板和管理员监督一队经纪人:线索分发、佣金、交易评审、业绩。
+- **仅作为经纪公司管理员的用户** —— 监督团队,不必同时运营个人线索工作空间。
+
+经纪公司层是同一个产品的一部分,不是另一个产品——房地产的操作系统必须同时覆盖经纪人个体和他们所属的公司。
+
+---
+
+## 代码在哪里
+
+这个仓库是一个产品,由两半组成,一起发布:
+
+| 路径 | 里面是什么 |
+|------|-----------|
+| **`crm/`** | 网页应用和面向经纪人的产品。Next.js 15 (App Router)、React 19、TypeScript、Tailwind、shadcn/ui。Clerk 鉴权、Supabase + pgvector、Resend、Telnyx、Upstash Redis、Stripe 计费。部署在 Vercel。 |
+| **仓库根目录** | Python 代理框架——驱动 Chippi 的推理、工具调用、记忆、技能和消息网关的引擎。Fork 自 [Nous Research 的 hermes-agent](https://github.com/NousResearch/hermes-agent),并针对房地产做了适配。 |
+
+网页应用调用代理运行时来处理对话和工具执行;代理运行时通过 CRM 的 API 和工具注册表(`crm/lib/ai-tools/`)反向操作工作空间。同一份记忆。同一套技能。同一个 Chippi。
+
 ```
-
-支持 Linux、macOS、WSL2 和 Android (Termux)。安装程序会自动处理平台特定的配置。
-
-> **Android / Termux：** 已测试的手动安装路径请参考 [Termux 指南](https://chippi-agent.nousresearch.com/docs/getting-started/termux)。在 Termux 上，Chippi 会安装精选的 `.[termux]` 扩展，因为完整的 `.[all]` 扩展会拉取 Android 不兼容的语音依赖。
->
-> **Windows：** 原生 Windows 不受支持。请安装 [WSL2](https://learn.microsoft.com/zh-cn/windows/wsl/install) 并运行上述命令。
-
-安装后：
-
-```bash
-source ~/.bashrc    # 重新加载 shell（或: source ~/.zshrc）
-chippi              # 开始对话！
+chippiagent/
+├── crm/                    # Next.js 网页应用——经纪人的工作空间
+│   ├── app/                # App Router 页面和 API 路由
+│   ├── components/         # UI 组件
+│   ├── lib/                # 业务逻辑、AI 工具、技能、集成
+│   ├── agent/              # 网页应用内的代理运行时胶水层
+│   └── supabase/           # 数据库 Schema
+├── chippi_cli/             # Python CLI 入口
+├── agent/                  # 代理循环、工具调用、规划
+├── skills/                 # 一方技能(过程记忆)
+├── plugins/                # 消息网关、推理服务商、MCP
+├── gateway/                # Telegram / Discord / Slack / WhatsApp / Signal
+├── chippi                  # CLI 启动器 (./chippi)
+└── pyproject.toml          # Python 依赖 (uv)
 ```
 
 ---
 
-## 快速入门
+## 快速开始
+
+### 网页应用 (`crm/`)
 
 ```bash
-chippi              # 交互式 CLI — 开始对话
-chippi model        # 选择 LLM 提供商和模型
-chippi tools        # 配置启用的工具
-chippi config set   # 设置单个配置项
-chippi gateway      # 启动消息网关（Telegram、Discord 等）
-chippi setup        # 运行完整设置向导（一次性配置所有内容）
-chippi claw migrate # 从 OpenClaw 迁移（如果来自 OpenClaw）
-chippi update       # 更新到最新版本
-chippi doctor       # 诊断问题
+cd crm
+cp .env.example .env.local      # 填入 Supabase、Clerk、OpenAI 密钥
+pnpm install
+pnpm dev                        # http://localhost:3000
 ```
 
-📖 **[完整文档 →](https://chippi-agent.nousresearch.com/docs/)**
+数据库:在 Supabase 启用 `vector` 扩展,然后跑 `crm/supabase/schema.sql`。完整环境变量参考见 [`crm/ENVIRONMENT.md`](crm/ENVIRONMENT.md)。
+
+### 代理框架(仓库根目录)
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv sync                         # 创建 .venv,安装依赖
+./chippi                        # 自动识别 venv
+```
+
+然后:
+
+```bash
+./chippi model        # 选择 LLM 提供商
+./chippi tools        # 配置启用的工具
+./chippi gateway      # 启动消息网关 (Telegram、Discord……)
+./chippi doctor       # 诊断问题
+```
+
+代理自带 Python 3.11、uv 和 `./chippi` 启动器,不需要你先激活 venv。如果想一次端到端装好(把 `~/.local/bin/chippi` 做成符号链接,安装 `.[all]`),跑 `./setup-chippi.sh`。
 
 ---
 
-## 省去到处收集 API Key — Nous Portal
+## 设计原则
 
-Chippi 始终允许你使用任意服务商，这点不会改变。但如果你不想为模型、网页搜索、图像生成、TTS、云浏览器分别去申请五个不同的 API Key，**[Nous Portal](https://portal.nousresearch.com)** 用一个订阅就能覆盖全部：
+下面这些来自 [`crm/PRODUCT_SCOPE.md`](crm/PRODUCT_SCOPE.md),管所有决策:
 
-- **300+ 模型** — 用 `/model <name>` 随时切换
-- **Tool Gateway** — 网页搜索（Firecrawl）、图像生成（FAL）、文本转语音（OpenAI）、云浏览器（Browser Use），全部通过订阅托管。无需额外注册任何账户。
-
-全新安装时一条命令即可：
-
-```bash
-chippi setup --portal
-```
-
-它会通过 OAuth 登录、把 Nous 设为推理服务商，并启用 Tool Gateway。随时用 `chippi portal status` 查看路由状态。完整说明见 [Tool Gateway 文档](https://chippi-agent.nousresearch.com/docs/user-guide/features/tool-gateway)。
-
-你随时可以按工具单独切回自己的 API Key — Gateway 是按工具粒度生效的，不是一刀切。
-
----
-
-## CLI 与消息平台 快速对照
-
-Chippi 有两种入口：用 `chippi` 启动终端 UI，或运行网关从 Telegram、Discord、Slack、WhatsApp、Signal 或 Email 与之对话。进入对话后，许多斜杠命令在两种界面中通用。
-
-| 操作 | CLI | 消息平台 |
-|------|-----|----------|
-| 开始对话 | `chippi` | 运行 `chippi gateway setup` + `chippi gateway start`，然后给机器人发消息 |
-| 开始新对话 | `/new` 或 `/reset` | `/new` 或 `/reset` |
-| 更换模型 | `/model [provider:model]` | `/model [provider:model]` |
-| 设置人格 | `/personality [name]` | `/personality [name]` |
-| 重试或撤销上一轮 | `/retry`、`/undo` | `/retry`、`/undo` |
-| 压缩上下文 / 查看用量 | `/compress`、`/usage`、`/insights [--days N]` | `/compress`、`/usage`、`/insights [days]` |
-| 浏览技能 | `/skills` 或 `/<skill-name>` | `/skills` 或 `/<skill-name>` |
-| 中断当前工作 | `Ctrl+C` 或发送新消息 | `/stop` 或发送新消息 |
-| 平台特定状态 | `/platforms` | `/status`、`/sethome` |
-
-完整命令列表请参阅 [CLI 指南](https://chippi-agent.nousresearch.com/docs/user-guide/cli) 和 [消息网关指南](https://chippi-agent.nousresearch.com/docs/user-guide/messaging)。
+1. **新功能应让 Chippi 替用户多做事**——而不是给用户多一个自己得操作的界面。
+2. **配置页是最后手段。**"我们加个设置吧"通常意味着代理没干好它该干的事。要么直接定下来,要么教代理学会。
+3. **每个 AI 输出都可解释。**没有理由的分数不发版。
+4. **代理起草;它绝不默默发送。**所有变更动作都要审批。
+5. **保护切入点。**新加入的独立经纪人从注册到拿到上线的摄取链接,只需几分钟,而不是一个配置项目。
 
 ---
 
 ## 文档
 
-所有文档位于 **[chippi-agent.nousresearch.com/docs](https://chippi-agent.nousresearch.com/docs/)**：
+产品和工程文档都在 `crm/` 里面:
 
-| 章节 | 内容 |
+| 文档 | 内容 |
 |------|------|
-| [快速开始](https://chippi-agent.nousresearch.com/docs/getting-started/quickstart) | 安装 → 设置 → 2 分钟内开始首次对话 |
-| [CLI 使用](https://chippi-agent.nousresearch.com/docs/user-guide/cli) | 命令、快捷键、人格、会话 |
-| [配置](https://chippi-agent.nousresearch.com/docs/user-guide/configuration) | 配置文件、提供商、模型、所有选项 |
-| [消息网关](https://chippi-agent.nousresearch.com/docs/user-guide/messaging) | Telegram、Discord、Slack、WhatsApp、Signal、Home Assistant |
-| [安全](https://chippi-agent.nousresearch.com/docs/user-guide/security) | 命令审批、DM 配对、容器隔离 |
-| [工具与工具集](https://chippi-agent.nousresearch.com/docs/user-guide/features/tools) | 40+ 工具、工具集系统、终端后端 |
-| [技能系统](https://chippi-agent.nousresearch.com/docs/user-guide/features/skills) | 过程记忆、技能中心、创建技能 |
-| [记忆](https://chippi-agent.nousresearch.com/docs/user-guide/features/memory) | 持久记忆、用户画像、最佳实践 |
-| [MCP 集成](https://chippi-agent.nousresearch.com/docs/user-guide/features/mcp) | 连接任意 MCP 服务器扩展能力 |
-| [定时调度](https://chippi-agent.nousresearch.com/docs/user-guide/features/cron) | 定时任务与平台投递 |
-| [上下文文件](https://chippi-agent.nousresearch.com/docs/user-guide/features/context-files) | 影响每次对话的项目上下文 |
-| [架构](https://chippi-agent.nousresearch.com/docs/developer-guide/architecture) | 项目结构、代理循环、关键类 |
-| [贡献](https://chippi-agent.nousresearch.com/docs/developer-guide/contributing) | 开发设置、PR 流程、代码风格 |
-| [CLI 参考](https://chippi-agent.nousresearch.com/docs/reference/cli-commands) | 所有命令和标志 |
-| [环境变量](https://chippi-agent.nousresearch.com/docs/reference/environment-variables) | 完整环境变量参考 |
+| [`crm/PRODUCT_SCOPE.md`](crm/PRODUCT_SCOPE.md) | Chippi 是什么、服务谁、边界在哪 |
+| [`crm/ARCHITECTURE.md`](crm/ARCHITECTURE.md) | 系统架构、数据流、代理运行时 |
+| [`crm/API_CONTRACTS.md`](crm/API_CONTRACTS.md) | 网页应用的 API 接口 |
+| [`crm/STYLESHEET.md`](crm/STYLESHEET.md) | 设计系统——tokens、组件、文案风格 |
+| [`crm/ROADMAP.md`](crm/ROADMAP.md) | 正在构建的内容 |
+| [`crm/SECURITY.md`](crm/SECURITY.md) | 鉴权、权限、数据隔离 |
+| [`crm/ENVIRONMENT.md`](crm/ENVIRONMENT.md) | 所有环境变量 |
+| [`crm/AGENTS.md`](crm/AGENTS.md) | 在这里写代码的人(人或 AI)必须遵守的硬规则 |
+| [`AGENTS.md`](AGENTS.md) | 代理框架的运行规则 |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | 开发环境搭建、代码风格、PR 流程 |
 
 ---
 
-## 从 OpenClaw 迁移
+## 致谢
 
-如果你来自 OpenClaw，Chippi 可以自动导入你的设置、记忆、技能和 API 密钥。
+Chippi 的代理引擎构建于 [Nous Research](https://nousresearch.com) 的 [**hermes-agent**](https://github.com/NousResearch/hermes-agent) 之上——一个出色的开源自进化代理基础(技能系统、记忆、消息网关、工具调用、终端后端)。我们对此心怀感激。
 
-**首次安装时：** 安装向导（`chippi setup`）会自动检测 `~/.openclaw` 并在配置开始前提供迁移选项。
-
-**安装后任意时间：**
-
-```bash
-chippi claw migrate              # 交互式迁移（完整预设）
-chippi claw migrate --dry-run    # 预览将要迁移的内容
-chippi claw migrate --preset user-data   # 仅迁移用户数据，不含密钥
-chippi claw migrate --overwrite  # 覆盖已有冲突
-```
-
-导入内容：
-- **SOUL.md** — 人格文件
-- **记忆** — MEMORY.md 和 USER.md 条目
-- **技能** — 用户创建的技能 → `~/.chippi/skills/openclaw-imports/`
-- **命令白名单** — 审批模式
-- **消息设置** — 平台配置、允许用户、工作目录
-- **API 密钥** — 白名单中的密钥（Telegram、OpenRouter、OpenAI、Anthropic、ElevenLabs）
-- **TTS 资产** — 工作区音频文件
-- **工作区指令** — AGENTS.md（使用 `--workspace-target`）
-
-使用 `chippi claw migrate --help` 查看所有选项，或使用 `openclaw-migration` 技能进行交互式代理引导迁移（含干运行预览）。
-
----
-
-## 贡献
-
-欢迎贡献！请参阅 [贡献指南](https://chippi-agent.nousresearch.com/docs/developer-guide/contributing) 了解开发设置、代码风格和 PR 流程。
-
-贡献者快速开始——克隆并使用 `setup-chippi.sh`：
-
-```bash
-git clone https://github.com/NousResearch/chippi-agent.git
-cd chippi-agent
-./setup-chippi.sh     # 安装 uv、创建 venv、安装 .[all]、创建符号链接 ~/.local/bin/chippi
-./chippi              # 自动检测 venv，无需先 source
-```
-
-手动安装（等效于上述命令）：
-
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-uv venv venv --python 3.11
-source venv/bin/activate
-uv pip install -e ".[all,dev]"
-python -m pytest tests/ -q
-```
-
----
-
-## 社区
-
-- 💬 [Discord](https://discord.gg/NousResearch)
-- 📚 [技能中心](https://agentskills.io)
-- 🐛 [问题反馈](https://github.com/NousResearch/chippi-agent/issues)
-- 💡 [讨论区](https://github.com/NousResearch/chippi-agent/discussions)
-- 🔌 [ChippiClaw](https://github.com/AaronWong1999/chippiclaw) — 社区微信桥接：在同一微信账号上运行 Chippi Agent 和 OpenClaw。
+本仓库 fork 了那套框架,把它改名为 Chippi,并针对一件事做了适配:运行面向美国房地产从业者的操作系统。原框架基于 MIT 许可证;详见 [LICENSE](LICENSE)。
 
 ---
 
 ## 许可证
 
-MIT — 详见 [LICENSE](LICENSE)。
+专有软件。保留所有权利。
 
-由 [Nous Research](https://nousresearch.com) 构建。
+Chippi 所依赖的上游 hermes-agent 框架,在其原作者 Nous Research 处依然以 MIT 许可证发布。

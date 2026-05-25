@@ -5,10 +5,10 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "chippi-agent"
 version = "0.14.0"
-description = "The self-improving AI agent — creates skills from experience, improves them during use, and runs anywhere"
+description = "Chippi — agentic OS for U.S. real estate professionals; autonomous agent framework with built-in CRM domain capabilities."
 readme = "README.md"
 requires-python = ">=3.11"
-authors = [{ name = "Nous Research" }]
+authors = [{ name = "Nous Research" }, { name = "mosnin" }]
 license = { text = "MIT" }
 dependencies = [
   # Core — every direct dep is exact-pinned to ==X.Y.Z (no ranges).
@@ -171,6 +171,25 @@ youtube = [
 ]
 # `chippi dashboard` (localhost SPA + API).  Not in core to keep the default install lean.
 web = ["fastapi==0.133.1", "uvicorn[standard]==0.41.0"]
+# CRM sub-agent — the Python deps the realtor CRM's background agent uses
+# (Composio integrations, OpenAI Agents SDK, Postgres, Modal, Upstash, plus
+# attachment extraction). These are ADDITIVE on top of the framework's
+# exact-pinned core: the CRM agent is a thin domain layer, not a fork, so
+# version ranges are deliberate to let the CRM track upstream SDK fixes
+# without forcing a framework-wide pin bump. See crm/agent/pyproject.toml
+# for the upstream-of-record pin policy.
+crm = [
+  "composio>=0.13.0,<0.14",
+  "composio-openai-agents>=0.13.0,<0.14",
+  "openai-agents>=0.0.15,<0.1",
+  "asyncpg>=0.30.0,<1",
+  "structlog>=25.1.0,<26",
+  "modal>=0.73.0,<1",
+  "upstash-redis>=1.3.0,<2",
+  "pypdf>=5.0.0,<6",
+  "python-docx>=1.1.0,<2",
+  "openpyxl>=3.1.0,<4",
+]
 all = [
   # Policy (2026-05-12): `[all]` includes only extras that genuinely
   # CAN'T be lazy-installed via `tools/lazy_deps.py` — i.e. things every
