@@ -1,23 +1,28 @@
 #
-# docker-compose.yml for Hermes Agent
+# docker-compose.yml for Chippi Agent + Real Estate CRM
 #
 # Usage:
-#   HERMES_UID=$(id -u) HERMES_GID=$(id -g) docker compose up -d
+#   CHIPPI_UID=$(id -u) CHIPPI_GID=$(id -g) docker compose up -d
 #
-# Set HERMES_UID / HERMES_GID to the host user that owns ~/.hermes so
+# Services:
+#   gateway   — Chippi agent gateway (Python). Dashboard on :9119.
+#   dashboard — Chippi web dashboard (separate process, also :9119 internal).
+#   crm       — Next.js CRM on :3000, depends on `gateway`.
+#
+# Set CHIPPI_UID / CHIPPI_GID to the host user that owns ~/.chippi so
 # files created inside the container stay readable/writable on the host.
-# The s6-overlay stage2 hook remaps the internal `hermes` user to these
+# The s6-overlay stage2 hook remaps the internal `chippi` user to these
 # values via usermod/groupmod; each supervised service then drops to that
 # user via `s6-setuidgid`.
 #
 # Security notes:
-#   - The dashboard service binds to 127.0.0.1 by default. It stores API
+#   - The dashboard is bound to 127.0.0.1 by default. It stores API
 #     keys; exposing it on LAN without auth is unsafe. If you want remote
 #     access, use an SSH tunnel or put it behind a reverse proxy that
 #     adds authentication — do NOT pass --insecure --host 0.0.0.0.
 #   - If you override entrypoint, keep `/init` as the first command in
 #     the chain (or let docker use the image's default ENTRYPOINT,
-#     which is `["/init", "/opt/hermes/docker/main-wrapper.sh"]`).
+#     which is `["/init", "/opt/chippi/docker/main-wrapper.sh"]`).
 #     `/init` is s6-overlay's PID 1 — it runs the cont-init.d scripts
 #     (chown, profile reconcile, dashboard toggle) and sets up the
 #     supervision tree before any service starts. Bypassing it skips
@@ -26,18 +31,29 @@
 #     and API_SERVER_HOST. See docs/user-guide/api-server.md before doing
 #     this on an internet-facing host.
 #
+# Networking:
+#   Both services join the `chippinet` bridge so the CRM can reach the
+#   agent via its DNS name (`chippi`). NEXT_PUBLIC_CHIPPI_AGENT_URL is
+#   wired into the CRM container as http://chippi:9119 — override it in
+#   .env if you point the agent's API server somewhere else.
+#
 services:
   gateway:
     build: .
-    image: hermes-agent
-    container_name: hermes
+    image: chippi-agent
+    container_name: chippi
     restart: unless-stopped
-    network_mode: host
+    networks:
+      - chippinet
+    # Bind dashboard to host loopback only. The intra-container network
+    # is reachable via the `chippi` service DNS name without publishing.
+    ports:
+      - "127.0.0.1:9119:9119"
     volumes:
-      - ~/.hermes:/opt/data
+      - ~/.chippi:/opt/data
     environment:
-      - HERMES_UID=${HERMES_UID:-10000}
-      - HERMES_GID=${HERMES_GID:-10000}
+      - CHIPPI_UID=${CHIPPI_UID:-10000}
+      - CHIPPI_GID=${CHIPPI_GID:-10000}
       # To expose the OpenAI-compatible API server beyond localhost,
       # uncomment BOTH lines (API_SERVER_KEY is mandatory for auth):
       # - API_SERVER_HOST=0.0.0.0
@@ -52,7 +68,7 @@ services:
       # Google Chat — uncomment and fill in to enable the Google Chat gateway.
       # See website/docs/user-guide/messaging/google_chat.md for the full setup.
       # The SA JSON path must point to a file mounted into the container —
-      # add a volume entry above (e.g. ``- ~/.hermes/google-chat-sa.json:/secrets/google-chat-sa.json:ro``)
+      # add a volume entry above (e.g. ``- ~/.chippi/google-chat-sa.json:/secrets/google-chat-sa.json:ro``)
       # then set GOOGLE_CHAT_SERVICE_ACCOUNT_JSON to that mount path.
       # - GOOGLE_CHAT_PROJECT_ID=${GOOGLE_CHAT_PROJECT_ID}
       # - GOOGLE_CHAT_SUBSCRIPTION_NAME=${GOOGLE_CHAT_SUBSCRIPTION_NAME}
@@ -61,16 +77,50 @@ services:
     command: ["gateway", "run"]
 
   dashboard:
-    image: hermes-agent
-    container_name: hermes-dashboard
+    image: chippi-agent
+    container_name: chippi-dashboard
     restart: unless-stopped
-    network_mode: host
+    networks:
+      - chippinet
     depends_on:
       - gateway
     volumes:
-      - ~/.hermes:/opt/data
+      - ~/.chippi:/opt/data
     environment:
-      - HERMES_UID=${HERMES_UID:-10000}
-      - HERMES_GID=${HERMES_GID:-10000}
-    # Localhost-only. For remote access, tunnel via `ssh -L 9119:localhost:9119`.
-    command: ["dashboard", "--host", "127.0.0.1", "--no-open"]
+      - CHIPPI_UID=${CHIPPI_UID:-10000}
+      - CHIPPI_GID=${CHIPPI_GID:-10000}
+    # Listen on 0.0.0.0 inside the bridge network so the host port
+    # publish above (and the CRM service) can reach it. The host-side
+    # bind in `ports:` is still pinned to 127.0.0.1.
+    command: ["dashboard", "--host", "0.0.0.0", "--no-open"]
+
+  crm:
+    build: ./crm
+    image: chippi-crm
+    container_name: chippi-crm
+    restart: unless-stopped
+    depends_on:
+      - gateway
+    networks:
+      - chippinet
+    ports:
+      - "3000:3000"
+    volumes:
+      # Live source so `pnpm dev`'s turbopack picks up edits. node_modules
+      # is masked with an anonymous volume so the container's install
+      # (alpine/linux) isn't shadowed by a host install (often macOS/arm).
+      - ./crm:/app
+      - /app/node_modules
+    environment:
+      # How the CRM reaches the chippi agent over the shared bridge.
+      # 9119 is the dashboard / web port; switch to the API server port
+      # if/when you enable API_SERVER_HOST above.
+      - NEXT_PUBLIC_CHIPPI_AGENT_URL=http://chippi:9119
+      # Next.js dev server defaults; override in your local .env as needed.
+      - NODE_ENV=development
+      - PORT=3000
+    command: ["pnpm", "dev"]
+
+networks:
+  chippinet:
+    driver: bridge

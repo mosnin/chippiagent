@@ -1,0 +1,1 @@
+Draft a follow-up message for a contact. $ARGUMENTS. Look up their data (budget, preferences, score, last interaction) and write a personalized, professional follow-up email. Keep it warm and action-oriented.

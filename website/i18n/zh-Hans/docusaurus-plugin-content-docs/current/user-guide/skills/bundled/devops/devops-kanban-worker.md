@@ -1,14 +1,14 @@
 ---
-title: "Kanban Worker — Hermes Kanban worker 的陷阱、示例与边界情况"
+title: "Kanban Worker — Chippi Kanban worker 的陷阱、示例与边界情况"
 sidebar_label: "Kanban Worker"
-description: "Hermes Kanban worker 的陷阱、示例与边界情况"
+description: "Chippi Kanban worker 的陷阱、示例与边界情况"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
 
 # Kanban Worker
 
-Hermes Kanban worker 的陷阱、示例与边界情况。生命周期本身会自动注入到每个 worker 的系统 prompt（提示词）中，作为 `KANBAN_GUIDANCE`（来自 `agent/prompt_builder.py`）；当你需要深入了解特定场景时，加载此 skill 即可。
+Chippi Kanban worker 的陷阱、示例与边界情况。生命周期本身会自动注入到每个 worker 的系统 prompt（提示词）中，作为 `KANBAN_GUIDANCE`（来自 `agent/prompt_builder.py`）；当你需要深入了解特定场景时，加载此 skill 即可。
 
 ## Skill 元数据
 
@@ -24,16 +24,16 @@ Hermes Kanban worker 的陷阱、示例与边界情况。生命周期本身会�
 ## 参考：完整 SKILL.md
 
 :::info
-以下是 Hermes 在触发此 skill 时加载的完整 skill 定义。这是 skill 激活时 agent 所看到的指令内容。
+以下是 Chippi 在触发此 skill 时加载的完整 skill 定义。这是 skill 激活时 agent 所看到的指令内容。
 :::
 
 # Kanban Worker — 陷阱与示例
 
-> 你看到此 skill，是因为 Hermes Kanban 调度器以 `--skills kanban-worker` 参数将你作为 worker 派生——它会为每个被派发的 worker 自动加载。**生命周期**（6 个步骤：orient → work → heartbeat → block/complete）也存在于自动注入到你系统 prompt 中的 `KANBAN_GUIDANCE` 块里。此 skill 是更深层的细节：良好的交接形式、重试诊断、边界情况。
+> 你看到此 skill，是因为 Chippi Kanban 调度器以 `--skills kanban-worker` 参数将你作为 worker 派生——它会为每个被派发的 worker 自动加载。**生命周期**（6 个步骤：orient → work → heartbeat → block/complete）也存在于自动注入到你系统 prompt 中的 `KANBAN_GUIDANCE` 块里。此 skill 是更深层的细节：良好的交接形式、重试诊断、边界情况。
 
 ## 工作区处理
 
-你的工作区类型决定了你在 `$HERMES_KANBAN_WORKSPACE` 内部的行为方式：
+你的工作区类型决定了你在 `$CHIPPI_KANBAN_WORKSPACE` 内部的行为方式：
 
 | 类型 | 含义 | 操作方式 |
 |---|---|---|
@@ -43,7 +43,7 @@ Hermes Kanban worker 的陷阱、示例与边界情况。生命周期本身会�
 
 ## 租户隔离
 
-若 `$HERMES_TENANT` 已设置，则该任务属于某个租户命名空间。在读写持久化内存时，请为内存条目添加租户前缀，以防上下文跨租户泄漏：
+若 `$CHIPPI_TENANT` 已设置，则该任务属于某个租户命名空间。在读写持久化内存时，请为内存条目添加租户前缀，以防上下文跨租户泄漏：
 
 - 正确：`business-a: Acme is our biggest customer`
 - 错误（会泄漏）：`Acme is our biggest customer`
@@ -67,7 +67,7 @@ kanban_complete(
 
 **需要人工审查的编码任务（review-required）：**
 
-对于大多数涉及代码变更的任务，在人工审查者过目之前，工作并未真正*完成*。应使用 block 而非 complete，并在 `reason` 前加 `review-required: ` 前缀，以便仪表板将该行标记为待审查。先将结构化元数据（变更文件、测试计数、diff/PR url）写入 comment，因为 `kanban_block` 只携带人类可读的原因——comment 是持久化注释的渠道。审查者可执行 `hermes kanban unblock <id>` 批准（这会携带 comment 线程重新派生你以处理后续事项），或通过另一条 comment 要求修改。
+对于大多数涉及代码变更的任务，在人工审查者过目之前，工作并未真正*完成*。应使用 block 而非 complete，并在 `reason` 前加 `review-required: ` 前缀，以便仪表板将该行标记为待审查。先将结构化元数据（变更文件、测试计数、diff/PR url）写入 comment，因为 `kanban_block` 只携带人类可读的原因——comment 是持久化注释的渠道。审查者可执行 `chippi kanban unblock <id>` 批准（这会携带 comment 线程重新派生你以处理后续事项），或通过另一条 comment 要求修改。
 
 ```python
 import json
@@ -151,7 +151,7 @@ kanban_complete(
 
 ```python
 kanban_comment(
-    task_id=os.environ["HERMES_KANBAN_TASK"],
+    task_id=os.environ["CHIPPI_KANBAN_TASK"],
     body="Full context: I have user IPs from Cloudflare headers but some users are behind NATs with thousands of peers. Keying on IP alone causes false positives.",
 )
 kanban_block(reason="Rate limit key choice: IP (simple, NAT-unsafe) or user_id (requires auth, skips anonymous endpoints)?")
@@ -178,7 +178,7 @@ block 消息是仪表板/gateway 通知器中显示的内容。comment 是人类
 ## 禁止事项
 
 - 不要用 `delegate_task` 替代 `kanban_create`。`delegate_task` 用于你的运行内部的短期推理子任务；`kanban_create` 用于跨 agent 的、超出单次 API 循环的交接。
-- 不要修改 `$HERMES_KANBAN_WORKSPACE` 之外的文件，除非任务正文明确要求。
+- 不要修改 `$CHIPPI_KANBAN_WORKSPACE` 之外的文件，除非任务正文明确要求。
 - 不要创建分配给自己的后续任务——分配给合适的专家。
 - 不要完成一个你实际上没有完成的任务。改为 block 它。
 
@@ -188,15 +188,15 @@ block 消息是仪表板/gateway 通知器中显示的内容。comment 是人类
 
 **工作区可能存在过期产物。** 尤其是 `dir:` 和 `worktree` 工作区可能包含来自先前运行的文件。阅读 comment 线程——它通常会解释你为何再次运行以及工作区处于何种状态。
 
-**当指导已可用时，不要依赖 CLI。** `kanban_*` 工具可在所有终端后端（Docker、Modal、SSH）上工作。从你的终端工具执行 `hermes kanban <verb>` 在容器化后端中会失败，因为 CLI 未安装在那里。如有疑问，使用工具。
+**当指导已可用时，不要依赖 CLI。** `kanban_*` 工具可在所有终端后端（Docker、Modal、SSH）上工作。从你的终端工具执行 `chippi kanban <verb>` 在容器化后端中会失败，因为 CLI 未安装在那里。如有疑问，使用工具。
 
 ## CLI 回退（用于脚本）
 
 每个工具都有对应的 CLI 等价命令，供人工操作员和脚本使用：
-- `kanban_show` ↔ `hermes kanban show <id> --json`
-- `kanban_complete` ↔ `hermes kanban complete <id> --summary "..." --metadata '{...}'`
-- `kanban_block` ↔ `hermes kanban block <id> "reason"`
-- `kanban_create` ↔ `hermes kanban create "title" --assignee <profile> [--parent <id>]`
+- `kanban_show` ↔ `chippi kanban show <id> --json`
+- `kanban_complete` ↔ `chippi kanban complete <id> --summary "..." --metadata '{...}'`
+- `kanban_block` ↔ `chippi kanban block <id> "reason"`
+- `kanban_create` ↔ `chippi kanban create "title" --assignee <profile> [--parent <id>]`
 - 等等。
 
 在 agent 内部使用工具；CLI 供终端前的人类使用。

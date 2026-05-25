@@ -22,7 +22,7 @@ const buildUiState = (): UiState => ({
   showCost: false,
   showReasoning: false,
   sid: null,
-  status: 'summoning hermes…',
+  status: 'summoning chippi…',
   statusBar: 'top',
   streaming: true,
   theme: DEFAULT_THEME,

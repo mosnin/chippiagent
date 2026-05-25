@@ -1,0 +1,8 @@
+{
+  "name": "chippi-broker-tools",
+  "description": "Brokerage management tools for Chippi. View team performance, manage unassigned leads, and track agent activity.",
+  "version": "1.0.0",
+  "author": { "name": "Chippi", "url": "https://usechippi.com" },
+  "homepage": "https://usechippi.com",
+  "keywords": ["crm", "brokerage", "team", "real-estate", "chippi"]
+}

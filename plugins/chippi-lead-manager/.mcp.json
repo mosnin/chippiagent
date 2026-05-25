@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "chippi": {
+      "type": "url",
+      "url": "https://my.usechippi.com/api/mcp",
+      "note": "After installing, go to Chippi Settings → Integrations to generate an API key"
+    }
+  }
+}

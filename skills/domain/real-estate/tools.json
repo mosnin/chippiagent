@@ -1,0 +1,271 @@
+{
+  "skill": "real-estate",
+  "version": "0.1.0",
+  "source_agent": "crm/agent/chippi.py",
+  "agent_factory": "crm.agent.chippi:make_chippi_agent",
+  "tools_root": "crm/agent/tools/",
+  "schemas": "crm/agent/schemas.py",
+  "guardrails": "crm/agent/security/guardrails.py",
+  "execution_modes": [
+    {
+      "name": "chat",
+      "description": "Realtor sent a message via /api/ai/task (Modal chat_turn). Identify the real job, run tools, answer in chat. Drafts surface a draft id rather than sending."
+    },
+    {
+      "name": "autonomous",
+      "description": "Triggered by application_submitted / tour_completed / new_lead / deal_stage_changed / inbound_message / goal_completed, or a periodic sweep. Take actions and stop. Always end with log_activity_run.",
+      "triggers": [
+        "application_submitted",
+        "tour_completed",
+        "new_lead",
+        "deal_stage_changed",
+        "inbound_message",
+        "goal_completed",
+        "sweep"
+      ]
+    }
+  ],
+  "tool_count": 34,
+  "tools": [
+    {
+      "name": "create_contact",
+      "source": "crm/agent/tools/contacts.py",
+      "category": "contacts",
+      "writes": true,
+      "summary": "Create a new contact (lead / buyer / seller / rental) in the workspace."
+    },
+    {
+      "name": "find_contacts",
+      "source": "crm/agent/tools/contacts.py",
+      "category": "contacts",
+      "writes": false,
+      "summary": "Find contacts by id, name substring, lead type, overdue follow-up, or quiet-days sweep filter."
+    },
+    {
+      "name": "get_contact_activity",
+      "source": "crm/agent/tools/contacts.py",
+      "category": "contacts",
+      "writes": false,
+      "summary": "Most recent activity entries for a contact."
+    },
+    {
+      "name": "update_contact",
+      "source": "crm/agent/tools/contacts.py",
+      "category": "contacts",
+      "writes": true,
+      "summary": "Update a contact. Pass only fields to change."
+    },
+    {
+      "name": "create_deal",
+      "source": "crm/agent/tools/deals.py",
+      "category": "deals",
+      "writes": true,
+      "summary": "Create a new deal in a pipeline stage. Links contact ids when known."
+    },
+    {
+      "name": "find_deals",
+      "source": "crm/agent/tools/deals.py",
+      "category": "deals",
+      "writes": false,
+      "summary": "Find deals; supports stalled-days and closing-within-days filters used by sweeps."
+    },
+    {
+      "name": "update_deal",
+      "source": "crm/agent/tools/deals.py",
+      "category": "deals",
+      "writes": true,
+      "summary": "Update a deal. Probability and follow-up dates only from chat — never status/value/title."
+    },
+    {
+      "name": "advance_deal_stage",
+      "source": "crm/agent/tools/deals.py",
+      "category": "deals",
+      "writes": true,
+      "summary": "Move a deal between pipeline stages by stage name (case-insensitive) or id."
+    },
+    {
+      "name": "request_deal_review",
+      "source": "crm/agent/tools/deals.py",
+      "category": "deals",
+      "writes": true,
+      "brokerage_only": true,
+      "summary": "Flag a deal up to the broker for human review."
+    },
+    {
+      "name": "book_tour",
+      "source": "crm/agent/tools/tours.py",
+      "category": "tours",
+      "writes": true,
+      "summary": "Book a tour for a contact at a specific time. Requires contact email on file."
+    },
+    {
+      "name": "route_lead",
+      "source": "crm/agent/tools/routing.py",
+      "category": "routing",
+      "writes": true,
+      "brokerage_only": true,
+      "summary": "Preview by default (commit=False); set commit=True to actually move the contact to the destination realtor's space."
+    },
+    {
+      "name": "add_property",
+      "source": "crm/agent/tools/properties.py",
+      "category": "properties",
+      "writes": true,
+      "summary": "Add a property to the realtor's inventory."
+    },
+    {
+      "name": "send_property_packet",
+      "source": "crm/agent/tools/properties.py",
+      "category": "properties",
+      "writes": true,
+      "summary": "Draft a packet share message with the secure packet URL pre-filled. Pass packet_id or property_id."
+    },
+    {
+      "name": "recall_memory",
+      "source": "crm/agent/tools/memory_tools.py",
+      "category": "memory",
+      "writes": false,
+      "summary": "Semantic recall across the workspace. query= for topic search, entity_id= for a specific contact."
+    },
+    {
+      "name": "store_memory",
+      "source": "crm/agent/tools/memory_tools.py",
+      "category": "memory",
+      "writes": true,
+      "summary": "Store a memory for future runs. Auto-embedded. Use for things a realtor will care about in six months."
+    },
+    {
+      "name": "manage_goal",
+      "source": "crm/agent/tools/goals.py",
+      "category": "goals",
+      "writes": true,
+      "summary": "Manage persistent agent goals (create / list / update / complete)."
+    },
+    {
+      "name": "manage_routines",
+      "source": "crm/agent/tools/routines.py",
+      "category": "routines",
+      "writes": true,
+      "summary": "Manage the realtor's routines — standing instructions Chippi runs on a schedule."
+    },
+    {
+      "name": "draft_message",
+      "source": "crm/agent/tools/drafts.py",
+      "category": "drafts",
+      "writes": true,
+      "summary": "Create a pending AgentDraft for the realtor to approve. Auto-dedupes within 48h on contact+channel. NEVER sends."
+    },
+    {
+      "name": "outcome",
+      "source": "crm/agent/tools/outcome.py",
+      "category": "outcomes",
+      "writes": true,
+      "summary": "Record an outcome or summarise outcomes."
+    },
+    {
+      "name": "analyze_portfolio",
+      "source": "crm/agent/tools/portfolio.py",
+      "category": "insights",
+      "writes": false,
+      "summary": "Analyse the full contact and deal portfolio for the space."
+    },
+    {
+      "name": "generate_priority_list",
+      "source": "crm/agent/tools/priority.py",
+      "category": "insights",
+      "writes": false,
+      "summary": "Generate a ranked list of contacts the realtor should focus on today."
+    },
+    {
+      "name": "process_inbound_message",
+      "source": "crm/agent/tools/inbound.py",
+      "category": "io",
+      "writes": true,
+      "summary": "Process a reply received from a contact."
+    },
+    {
+      "name": "read_attachment",
+      "source": "crm/agent/tools/attachments.py",
+      "category": "io",
+      "writes": false,
+      "summary": "Read the contents of a chat attachment by id (PDF / DOCX / XLSX / text)."
+    },
+    {
+      "name": "ask_realtor",
+      "source": "crm/agent/tools/questions.py",
+      "category": "asking",
+      "writes": true,
+      "summary": "Ask the realtor a one-sentence question when intent is genuinely ambiguous."
+    },
+    {
+      "name": "log_activity_run",
+      "source": "crm/agent/tools/activities.py",
+      "category": "audit",
+      "writes": true,
+      "summary": "Persist an entry to AgentActivityLog. Required at the end of every autonomous run."
+    },
+    {
+      "name": "recall_docs",
+      "source": "crm/agent/tools/docs.py",
+      "category": "help",
+      "writes": false,
+      "summary": "Search the app knowledge base for help and how-to documentation."
+    },
+    {
+      "name": "create_plan",
+      "source": "crm/agent/tools/plan.py",
+      "category": "planning",
+      "writes": true,
+      "summary": "Announce a structured execution plan BEFORE carrying out a complex task. Required for 2+ contacts/deals or 3+ tool calls."
+    },
+    {
+      "name": "get_intake_form",
+      "source": "crm/agent/tools/intake_form.py",
+      "category": "intake",
+      "writes": false,
+      "summary": "Fetch the current intake form config for this space. Always call this first before any edit."
+    },
+    {
+      "name": "add_intake_question",
+      "source": "crm/agent/tools/intake_form.py",
+      "category": "intake",
+      "writes": true,
+      "summary": "Add a new question to a section (creates the section if it doesn't exist)."
+    },
+    {
+      "name": "remove_intake_question",
+      "source": "crm/agent/tools/intake_form.py",
+      "category": "intake",
+      "writes": true,
+      "summary": "Remove a question by its label. System fields (Name / Email / Phone) cannot be removed."
+    },
+    {
+      "name": "update_intake_question",
+      "source": "crm/agent/tools/intake_form.py",
+      "category": "intake",
+      "writes": true,
+      "summary": "Rename, re-option, or change required status on an existing question."
+    },
+    {
+      "name": "save_intake_form",
+      "source": "crm/agent/tools/intake_form.py",
+      "category": "intake",
+      "writes": true,
+      "summary": "Replace the entire intake form config in one call. Use only for wholesale rewrites."
+    },
+    {
+      "name": "generate_studio_image",
+      "source": "crm/agent/tools/studio.py",
+      "category": "studio",
+      "writes": true,
+      "summary": "Generate a branded image or short video for the realtor with Studio. Saves to Files + Studio."
+    },
+    {
+      "name": "edit_studio_image",
+      "source": "crm/agent/tools/studio.py",
+      "category": "studio",
+      "writes": true,
+      "summary": "Edit an image the realtor already has (upscale, cut background, restyle by instruction). Pass file_id. Chain after generate_studio_image."
+    }
+  ]
+}

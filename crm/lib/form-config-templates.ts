@@ -1,0 +1,482 @@
+/**
+ * Built-in form templates for the dynamic form builder.
+ *
+ * Three templates:
+ *   1. Rental Application — full rental screening form
+ *   2. Buyer Inquiry — buyer lead capture + pre-approval
+ *   3. General Lead Capture — lightweight contact-only form
+ */
+
+import type { IntakeFormConfig } from '@/lib/form-config-schema';
+
+export const RENTAL_APPLICATION_TEMPLATE: IntakeFormConfig = {
+  version: 1,
+  leadType: 'rental',
+  sections: [
+    {
+      id: 'contact-info',
+      title: 'Contact Information',
+      description: 'Basic contact details for your application.',
+      position: 0,
+      questions: [
+        {
+          id: 'name',
+          type: 'text',
+          label: 'Full Legal Name',
+          placeholder: 'John Doe',
+          required: true,
+          position: 0,
+          system: true,
+          validation: { minLength: 1, maxLength: 120 },
+        },
+        {
+          id: 'email',
+          type: 'email',
+          label: 'Email Address',
+          placeholder: 'john@example.com',
+          required: true,
+          position: 1,
+          system: true,
+          validation: { maxLength: 255 },
+        },
+        {
+          id: 'phone',
+          type: 'phone',
+          label: 'Phone Number',
+          placeholder: '(555) 123-4567',
+          required: true,
+          position: 2,
+          system: true,
+          validation: { maxLength: 40 },
+        },
+        {
+          id: 'dateOfBirth',
+          type: 'date',
+          label: 'Date of Birth',
+          required: false,
+          position: 3,
+        },
+      ],
+    },
+    {
+      id: 'property-details',
+      title: 'Property Details',
+      description: 'Tell us about the property you\'re interested in.',
+      position: 1,
+      questions: [
+        {
+          id: 'propertyAddress',
+          type: 'text',
+          label: 'Property Address',
+          placeholder: '123 Main St, Apt 4B',
+          required: false,
+          position: 0,
+        },
+        {
+          id: 'targetMoveInDate',
+          type: 'date',
+          label: 'Target Move-in Date',
+          required: false,
+          position: 1,
+        },
+        {
+          id: 'monthlyRent',
+          type: 'select',
+          label: 'Monthly Rent Budget',
+          required: false,
+          position: 2,
+          options: [
+            { value: 'under_1000', label: 'Under $1,000' },
+            { value: '1000_1500', label: '$1,000 - $1,500' },
+            { value: '1500_2000', label: '$1,500 - $2,000' },
+            { value: '2000_2500', label: '$2,000 - $2,500' },
+            { value: '2500_3000', label: '$2,500 - $3,000' },
+            { value: '3000_plus', label: '$3,000+' },
+          ],
+          scoring: { weight: 20 },
+        },
+        {
+          id: 'numberOfOccupants',
+          type: 'number',
+          label: 'Number of Occupants',
+          required: false,
+          position: 3,
+          validation: { min: 1, max: 20 },
+        },
+      ],
+    },
+    {
+      id: 'employment-income',
+      title: 'Employment & Income',
+      description: 'Your employment and income information.',
+      position: 2,
+      questions: [
+        {
+          id: 'employmentStatus',
+          type: 'select',
+          label: 'Employment Status',
+          required: false,
+          position: 0,
+          options: [
+            { value: 'employed', label: 'Full-time Employed', scoreValue: 10 },
+            { value: 'self-employed', label: 'Self-Employed', scoreValue: 8 },
+            { value: 'part-time', label: 'Part-time Employed', scoreValue: 6 },
+            { value: 'student', label: 'Student', scoreValue: 4 },
+            { value: 'retired', label: 'Retired', scoreValue: 7 },
+            { value: 'unemployed', label: 'Not Currently Employed', scoreValue: 2 },
+          ],
+          scoring: {
+            weight: 15,
+            mappings: [
+              { value: 'employed', points: 10 },
+              { value: 'self-employed', points: 8 },
+              { value: 'part-time', points: 6 },
+              { value: 'student', points: 4 },
+              { value: 'retired', points: 7 },
+              { value: 'unemployed', points: 2 },
+            ],
+          },
+        },
+        {
+          id: 'employerOrSource',
+          type: 'text',
+          label: 'Employer / Income Source',
+          placeholder: 'Company name or income source',
+          required: false,
+          position: 1,
+          visibleWhen: { questionId: 'employmentStatus', operator: 'not_equals', value: 'unemployed' },
+        },
+        {
+          id: 'monthlyGrossIncome',
+          type: 'select',
+          label: 'Monthly Gross Income',
+          required: false,
+          position: 2,
+          options: [
+            { value: 'under_2000', label: 'Under $2,000' },
+            { value: '2000_3000', label: '$2,000 - $3,000' },
+            { value: '3000_4000', label: '$3,000 - $4,000' },
+            { value: '4000_5000', label: '$4,000 - $5,000' },
+            { value: '5000_7500', label: '$5,000 - $7,500' },
+            { value: '7500_plus', label: '$7,500+' },
+          ],
+          scoring: { weight: 25 },
+        },
+      ],
+    },
+    {
+      id: 'screening',
+      title: 'Background Information',
+      description: 'Required screening questions.',
+      position: 3,
+      questions: [
+        {
+          id: 'priorEvictions',
+          type: 'radio',
+          label: 'Have you ever been evicted?',
+          required: false,
+          position: 0,
+          options: [
+            { value: 'no', label: 'No', scoreValue: 10 },
+            { value: 'yes', label: 'Yes', scoreValue: 0 },
+          ],
+          scoring: {
+            weight: 15,
+            mappings: [
+              { value: 'no', points: 10 },
+              { value: 'yes', points: 0 },
+            ],
+          },
+        },
+        {
+          id: 'hasPets',
+          type: 'radio',
+          label: 'Do you have pets?',
+          required: false,
+          position: 1,
+          options: [
+            { value: 'no', label: 'No' },
+            { value: 'yes', label: 'Yes' },
+          ],
+        },
+        {
+          id: 'petDetails',
+          type: 'textarea',
+          label: 'Pet Details',
+          placeholder: 'Type, breed, weight...',
+          required: false,
+          position: 2,
+          visibleWhen: { questionId: 'hasPets', operator: 'equals', value: 'yes' },
+        },
+        {
+          id: 'additionalNotes',
+          type: 'textarea',
+          label: 'Additional Notes',
+          placeholder: 'Anything else you\'d like us to know?',
+          required: false,
+          position: 3,
+          validation: { maxLength: 4000 },
+        },
+      ],
+    },
+  ],
+};
+
+export const BUYER_INQUIRY_TEMPLATE: IntakeFormConfig = {
+  version: 1,
+  leadType: 'buyer',
+  sections: [
+    {
+      id: 'contact-info',
+      title: 'Contact Information',
+      position: 0,
+      questions: [
+        {
+          id: 'name',
+          type: 'text',
+          label: 'Full Name',
+          placeholder: 'Jane Smith',
+          required: true,
+          position: 0,
+          system: true,
+          validation: { minLength: 1, maxLength: 120 },
+        },
+        {
+          id: 'email',
+          type: 'email',
+          label: 'Email Address',
+          placeholder: 'jane@example.com',
+          required: true,
+          position: 1,
+          system: true,
+        },
+        {
+          id: 'phone',
+          type: 'phone',
+          label: 'Phone Number',
+          placeholder: '(555) 987-6543',
+          required: true,
+          position: 2,
+          system: true,
+        },
+      ],
+    },
+    {
+      id: 'buyer-details',
+      title: 'Buying Preferences',
+      description: 'Help us understand what you\'re looking for.',
+      position: 1,
+      questions: [
+        {
+          id: 'buyerBudget',
+          type: 'select',
+          label: 'Budget Range',
+          required: false,
+          position: 0,
+          options: [
+            { value: 'under_200k', label: 'Under $200,000' },
+            { value: '200k_350k', label: '$200,000 - $350,000' },
+            { value: '350k_500k', label: '$350,000 - $500,000' },
+            { value: '500k_750k', label: '$500,000 - $750,000' },
+            { value: '750k_1m', label: '$750,000 - $1,000,000' },
+            { value: '1m_plus', label: '$1,000,000+' },
+          ],
+          scoring: { weight: 20 },
+        },
+        {
+          id: 'propertyType',
+          type: 'select',
+          label: 'Property Type',
+          required: false,
+          position: 1,
+          options: [
+            { value: 'single-family', label: 'Single Family Home' },
+            { value: 'condo', label: 'Condo / Apartment' },
+            { value: 'townhouse', label: 'Townhouse' },
+            { value: 'multi-family', label: 'Multi-Family' },
+            { value: 'land', label: 'Land / Lot' },
+          ],
+        },
+        {
+          id: 'bedrooms',
+          type: 'select',
+          label: 'Bedrooms',
+          required: false,
+          position: 2,
+          options: [
+            { value: '1', label: '1' },
+            { value: '2', label: '2' },
+            { value: '3', label: '3' },
+            { value: '4', label: '4' },
+            { value: '5+', label: '5+' },
+          ],
+        },
+        {
+          id: 'buyerTimeline',
+          type: 'select',
+          label: 'When are you looking to buy?',
+          required: false,
+          position: 3,
+          options: [
+            { value: 'asap', label: 'As soon as possible', scoreValue: 10 },
+            { value: '1-3mo', label: '1-3 months', scoreValue: 8 },
+            { value: '3-6mo', label: '3-6 months', scoreValue: 5 },
+            { value: 'exploring', label: 'Just exploring', scoreValue: 2 },
+          ],
+          scoring: {
+            weight: 20,
+            mappings: [
+              { value: 'asap', points: 10 },
+              { value: '1-3mo', points: 8 },
+              { value: '3-6mo', points: 5 },
+              { value: 'exploring', points: 2 },
+            ],
+          },
+        },
+      ],
+    },
+    {
+      id: 'pre-approval',
+      title: 'Pre-Approval Status',
+      description: 'This helps us prioritize your search.',
+      position: 2,
+      questions: [
+        {
+          id: 'preApprovalStatus',
+          type: 'radio',
+          label: 'Are you pre-approved for a mortgage?',
+          required: false,
+          position: 0,
+          options: [
+            { value: 'yes', label: 'Yes', scoreValue: 10 },
+            { value: 'no', label: 'No', scoreValue: 3 },
+            { value: 'not-yet', label: 'Not yet, but planning to', scoreValue: 6 },
+          ],
+          scoring: {
+            weight: 25,
+            mappings: [
+              { value: 'yes', points: 10 },
+              { value: 'no', points: 3 },
+              { value: 'not-yet', points: 6 },
+            ],
+          },
+        },
+        {
+          id: 'preApprovalLender',
+          type: 'text',
+          label: 'Pre-Approval Lender',
+          placeholder: 'Bank / lender name',
+          required: false,
+          position: 1,
+          visibleWhen: { questionId: 'preApprovalStatus', operator: 'equals', value: 'yes' },
+        },
+        {
+          id: 'firstTimeBuyer',
+          type: 'radio',
+          label: 'First-time buyer?',
+          required: false,
+          position: 2,
+          options: [
+            { value: 'yes', label: 'Yes' },
+            { value: 'no', label: 'No' },
+          ],
+        },
+        {
+          id: 'additionalNotes',
+          type: 'textarea',
+          label: 'Additional Notes',
+          placeholder: 'Anything else you\'d like us to know?',
+          required: false,
+          position: 3,
+          validation: { maxLength: 4000 },
+        },
+      ],
+    },
+  ],
+};
+
+export const GENERAL_LEAD_CAPTURE_TEMPLATE: IntakeFormConfig = {
+  version: 1,
+  leadType: 'general',
+  sections: [
+    {
+      id: 'contact-info',
+      title: 'Get In Touch',
+      description: 'We\'d love to hear from you.',
+      position: 0,
+      questions: [
+        {
+          id: 'name',
+          type: 'text',
+          label: 'Full Name',
+          placeholder: 'Your name',
+          required: true,
+          position: 0,
+          system: true,
+          validation: { minLength: 1, maxLength: 120 },
+        },
+        {
+          id: 'email',
+          type: 'email',
+          label: 'Email',
+          placeholder: 'you@example.com',
+          required: true,
+          position: 1,
+          system: true,
+        },
+        {
+          id: 'phone',
+          type: 'phone',
+          label: 'Phone',
+          placeholder: '(555) 000-0000',
+          required: true,
+          position: 2,
+          system: true,
+        },
+        {
+          id: 'interestedIn',
+          type: 'select',
+          label: 'I\'m interested in...',
+          required: false,
+          position: 3,
+          options: [
+            { value: 'buying', label: 'Buying a property' },
+            { value: 'renting', label: 'Renting a property' },
+            { value: 'selling', label: 'Selling a property' },
+            { value: 'other', label: 'Other' },
+          ],
+        },
+        {
+          id: 'additionalNotes',
+          type: 'textarea',
+          label: 'Message',
+          placeholder: 'Tell us how we can help...',
+          required: false,
+          position: 4,
+          validation: { maxLength: 4000 },
+        },
+      ],
+    },
+  ],
+};
+
+export const FORM_TEMPLATES = [
+  {
+    id: 'rental-application',
+    name: 'Rental Application',
+    description: 'Comprehensive rental screening form with employment, income, and background questions.',
+    config: RENTAL_APPLICATION_TEMPLATE,
+  },
+  {
+    id: 'buyer-inquiry',
+    name: 'Buyer Inquiry',
+    description: 'Buyer lead capture with budget, preferences, and pre-approval status.',
+    config: BUYER_INQUIRY_TEMPLATE,
+  },
+  {
+    id: 'general-lead-capture',
+    name: 'General Lead Capture',
+    description: 'Lightweight contact form for quick lead generation.',
+    config: GENERAL_LEAD_CAPTURE_TEMPLATE,
+  },
+];

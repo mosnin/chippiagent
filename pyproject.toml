@@ -3,12 +3,12 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "hermes-agent"
+name = "chippi-agent"
 version = "0.14.0"
-description = "The self-improving AI agent — creates skills from experience, improves them during use, and runs anywhere"
+description = "Chippi — agentic OS for U.S. real estate professionals; autonomous agent framework with built-in CRM domain capabilities."
 readme = "README.md"
 requires-python = ">=3.11"
-authors = [{ name = "Nous Research" }]
+authors = [{ name = "Nous Research" }, { name = "mosnin" }]
 license = { text = "MIT" }
 dependencies = [
   # Core — every direct dep is exact-pinned to ==X.Y.Z (no ranges).
@@ -25,7 +25,7 @@ dependencies = [
   # `uv lock` so the transitive resolution stays consistent. Don't
   # introduce ranges back without a written justification.
   #
-  # Scope rule: only packages used by EVERY hermes session belong here.
+  # Scope rule: only packages used by EVERY chippi session belong here.
   # Anything that's provider-specific (`anthropic`, `firecrawl-py`,
   # `exa-py`, `fal-client`, `edge-tts`, `parallel-web`) belongs in an
   # extra and gets lazy-installed via `tools/lazy_deps.py` when the
@@ -71,7 +71,7 @@ dependencies = [
 # OpenRouter or other aggregators).
 anthropic = ["anthropic==0.86.0"]
 # Web search backends — each only loaded when the user picks it as their
-# search provider (configured via `hermes tools` or config.yaml).
+# search provider (configured via `chippi tools` or config.yaml).
 exa = ["exa-py==2.10.2"]
 firecrawl = ["firecrawl-py==4.17.0"]
 parallel-web = ["parallel-web==0.4.2"]
@@ -107,7 +107,7 @@ mcp = ["mcp==1.26.0"]
 homeassistant = ["aiohttp==3.13.3"]
 sms = ["aiohttp==3.13.3"]
 # Computer use — macOS background desktop control via cua-driver (MCP stdio).
-# The cua-driver binary itself is installed via `hermes tools` post-setup
+# The cua-driver binary itself is installed via `chippi tools` post-setup
 # (curl install script); this extra just pins the MCP client used to talk
 # to it, which is already provided by the `mcp` extra.
 computer-use = ["mcp==1.26.0"]
@@ -123,8 +123,8 @@ acp = ["agent-client-protocol==0.9.0"]
 #   2. Add back: mistral = ["mistralai==<verified-version>"]
 #   3. Re-enable Mistral in:
 #        - tools/lazy_deps.py (LAZY_DEPS["tts.mistral"], LAZY_DEPS["stt.mistral"])
-#        - hermes_cli/tools_config.py (un-hide from provider picker)
-#        - hermes_cli/web_server.py (re-add to dashboard STT options)
+#        - chippi_cli/tools_config.py (un-hide from provider picker)
+#        - chippi_cli/web_server.py (re-add to dashboard STT options)
 #        - tools/transcription_tools.py / tools/tts_tool.py (drop disabled stubs)
 #   4. Run `uv lock` to regenerate transitives.
 #   5. Optionally re-add to [all] only after a few days of clean operation.
@@ -133,23 +133,23 @@ azure-identity = ["azure-identity==1.25.3"]
 termux = [
   # Baseline Android / Termux path for reliable fresh installs.
   "python-telegram-bot[webhooks]==22.6",
-  "hermes-agent[cron]",
-  "hermes-agent[cli]",
-  "hermes-agent[pty]",
-  "hermes-agent[mcp]",
-  "hermes-agent[honcho]",
-  "hermes-agent[acp]",
+  "chippi-agent[cron]",
+  "chippi-agent[cli]",
+  "chippi-agent[pty]",
+  "chippi-agent[mcp]",
+  "chippi-agent[honcho]",
+  "chippi-agent[acp]",
 ]
 termux-all = [
   # Best-effort "install all" profile for Termux. Same policy as [all]:
   # only includes extras that aren't covered by `tools/lazy_deps.py`.
   # Backends like telegram/slack/dingtalk/feishu/honcho lazy-install at
   # first use, so they're no longer eager-installed here.
-  "hermes-agent[termux]",
-  "hermes-agent[google]",
-  "hermes-agent[homeassistant]",
-  "hermes-agent[sms]",
-  "hermes-agent[web]",
+  "chippi-agent[termux]",
+  "chippi-agent[google]",
+  "chippi-agent[homeassistant]",
+  "chippi-agent[sms]",
+  "chippi-agent[web]",
 ]
 dingtalk = ["dingtalk-stream==0.24.3", "alibabacloud-dingtalk==2.2.42", "qrcode==7.4.2"]
 feishu = ["lark-oapi==1.5.3", "qrcode==7.4.2"]
@@ -169,8 +169,31 @@ youtube = [
   # at first invocation with ModuleNotFoundError (issue #22243).
   "youtube-transcript-api==1.2.4",
 ]
-# `hermes dashboard` (localhost SPA + API).  Not in core to keep the default install lean.
+# `chippi dashboard` (localhost SPA + API).  Not in core to keep the default install lean.
 web = ["fastapi==0.133.1", "uvicorn[standard]==0.41.0"]
+# CRM sub-agent — the Python deps the realtor CRM's background agent uses
+# (Composio integrations, OpenAI Agents SDK, Postgres, Upstash, plus
+# attachment extraction). These are ADDITIVE on top of the framework's
+# exact-pinned core: the CRM agent is a thin domain layer, not a fork, so
+# version ranges are deliberate to let the CRM track upstream SDK fixes
+# without forcing a framework-wide pin bump. See crm/agent/pyproject.toml
+# for the upstream-of-record pin policy.
+#
+# `modal` is intentionally NOT in this extra — the framework's [modal]
+# extra pins modal==1.3.4 (incompatible with the CRM's modal>=0.73,<1
+# range). When deploying the CRM sub-agent specifically, install from
+# `crm/agent/pyproject.toml` instead of using this extra.
+crm = [
+  "composio>=0.13.0,<0.14",
+  "composio-openai-agents>=0.13.0,<0.14",
+  "openai-agents>=0.0.15,<0.1",
+  "asyncpg>=0.30.0,<1",
+  "structlog>=25.1.0,<26",
+  "upstash-redis>=1.3.0,<2",
+  "pypdf>=5.0.0,<6",
+  "python-docx>=1.1.0,<2",
+  "openpyxl>=3.1.0,<4",
+]
 all = [
   # Policy (2026-05-12): `[all]` includes only extras that genuinely
   # CAN'T be lazy-installed via `tools/lazy_deps.py` — i.e. things every
@@ -193,29 +216,29 @@ all = [
   # [all], `uv sync --locked` on Windows tried to build it from sdist
   # and failed on `make`. Lazy-install routes that build to first use,
   # where the user is expected to have a toolchain available.
-  "hermes-agent[cron]",
-  "hermes-agent[cli]",
-  "hermes-agent[dev]",
-  "hermes-agent[pty]",
-  "hermes-agent[mcp]",
-  "hermes-agent[homeassistant]",
-  "hermes-agent[sms]",
-  "hermes-agent[acp]",
-  "hermes-agent[google]",
-  "hermes-agent[web]",
-  "hermes-agent[youtube]",
+  "chippi-agent[cron]",
+  "chippi-agent[cli]",
+  "chippi-agent[dev]",
+  "chippi-agent[pty]",
+  "chippi-agent[mcp]",
+  "chippi-agent[homeassistant]",
+  "chippi-agent[sms]",
+  "chippi-agent[acp]",
+  "chippi-agent[google]",
+  "chippi-agent[web]",
+  "chippi-agent[youtube]",
 ]
 
 [project.scripts]
-hermes = "hermes_cli.main:main"
-hermes-agent = "run_agent:main"
-hermes-acp = "acp_adapter.entry:main"
+chippi = "chippi_cli.main:main"
+chippi-agent = "run_agent:main"
+chippi-acp = "acp_adapter.entry:main"
 
 [tool.setuptools]
-py-modules = ["run_agent", "model_tools", "toolsets", "batch_runner", "trajectory_compressor", "toolset_distributions", "cli", "hermes_bootstrap", "hermes_constants", "hermes_state", "hermes_time", "hermes_logging", "utils"]
+py-modules = ["run_agent", "model_tools", "toolsets", "batch_runner", "trajectory_compressor", "toolset_distributions", "cli", "chippi_bootstrap", "chippi_constants", "chippi_state", "chippi_time", "chippi_logging", "utils"]
 
 [tool.setuptools.package-data]
-hermes_cli = ["web_dist/**/*", "tui_dist/**/*", "scripts/install.sh", "scripts/install.ps1"]
+chippi_cli = ["web_dist/**/*", "tui_dist/**/*", "scripts/install.sh", "scripts/install.ps1"]
 gateway = ["assets/**/*"]
 plugins = [
   "*/dashboard/manifest.json",
@@ -224,13 +247,13 @@ plugins = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["agent", "agent.*", "tools", "tools.*", "hermes_cli", "gateway", "gateway.*", "tui_gateway", "tui_gateway.*", "cron", "acp_adapter", "plugins", "plugins.*", "providers", "providers.*"]
+include = ["agent", "agent.*", "tools", "tools.*", "chippi_cli", "gateway", "gateway.*", "tui_gateway", "tui_gateway.*", "cron", "acp_adapter", "plugins", "plugins.*", "providers", "providers.*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
     "integration: marks tests requiring external services (API keys, Modal, etc.)",
-    "real_concurrent_gate: opt out of the autouse stub that disables _detect_concurrent_hermes_instances",
+    "real_concurrent_gate: opt out of the autouse stub that disables _detect_concurrent_chippi_instances",
 ]
 # pytest-timeout: per-test 30s hard cap with signal method.
 # This is the fallback inside each per-file pytest subprocess (see
@@ -248,6 +271,10 @@ redundant-cast = "ignore"
 
 [tool.ruff]
 preview = true  # required for PLW1514 (unspecified-encoding) — preview rule
+# crm/ is a separate sub-project (mosnin/realestatecrm) with its own
+# pyproject.toml and ruff config (line-length=100, select=[E,F,I,UP]).
+# Don't double-lint it from here — the CRM has its own CI for that.
+extend-exclude = ["crm"]
 
 [tool.ruff.lint]
 # All other lints are intentionally disabled (see comment history on this

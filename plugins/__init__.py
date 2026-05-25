@@ -1,1 +1,1 @@
-# Hermes plugins package
+# Chippi plugins package

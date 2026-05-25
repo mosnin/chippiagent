@@ -9,11 +9,11 @@ from agent.skill_utils import (
 )
 
 
-def test_metadata_as_dict_with_hermes():
-    """Normal case: metadata is a dict containing hermes keys."""
+def test_metadata_as_dict_with_chippi():
+    """Normal case: metadata is a dict containing chippi keys."""
     frontmatter = {
         "metadata": {
-            "hermes": {
+            "chippi": {
                 "fallback_for_toolsets": ["toolset_a"],
                 "requires_toolsets": ["toolset_b"],
                 "fallback_for_tools": ["tool_x"],

@@ -1,0 +1,8 @@
+{
+  "name": "chippi-follow-up-writer",
+  "description": "Draft personalized follow-up messages using your Chippi contact data. Email templates, text messages, and re-engagement campaigns.",
+  "version": "1.0.0",
+  "author": { "name": "Chippi", "url": "https://usechippi.com" },
+  "homepage": "https://usechippi.com",
+  "keywords": ["crm", "follow-up", "email", "real-estate", "chippi"]
+}

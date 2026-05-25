@@ -1,0 +1,52 @@
+[project]
+name = "chippi-agent"
+version = "0.1.0"
+description = "Chippi background AI agent — Modal + OpenAI Agents SDK"
+requires-python = ">=3.12"
+
+dependencies = [
+  # Upper bounds keep `modal deploy` from silently pulling a breaking
+  # release. openai-agents is pre-1.0 (translate() in modal_app.py matches
+  # its event class names by name), so it is held to the 0.0.x line.
+  "openai-agents>=0.0.15,<0.1",
+  "openai>=1.75.0,<2",
+  "asyncpg>=0.30.0,<1",
+  "pydantic>=2.11.0,<3",
+  "httpx>=0.28.0,<1",
+  "upstash-redis>=1.3.0,<2",
+  "python-dotenv>=1.1.0,<2",
+  "modal>=0.73.0,<1",
+  "structlog>=25.1.0,<26",
+  # Attachment extraction (read_attachment tool)
+  "pypdf>=5.0.0,<6",
+  "python-docx>=1.1.0,<2",
+  "openpyxl>=3.1.0,<4",
+  # Composio integrations — load realtor's connected toolkits (Gmail,
+  # Slack, HubSpot, etc.) and present them as agent tools so chat AND
+  # autonomous runs can act on the realtor's behalf through their
+  # connected accounts. Mirrors the TypeScript-side wiring in
+  # lib/integrations/composio.ts.
+  #
+  # Package name: the v3 Python SDK (which matches @composio/core 0.8.x
+  # on the TS side, NOT the older `composio-core` package which is
+  # frozen at 0.7.21) is published as plain `composio` at 0.13.x.
+  "composio>=0.13.0,<0.14",
+  "composio-openai-agents>=0.13.0,<0.14",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.0",
+  "pytest-asyncio>=0.26.0",
+  "ruff>=0.11.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

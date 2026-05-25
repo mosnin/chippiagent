@@ -1,12 +1,12 @@
-"""Harness: dashboard opt-in via HERMES_DASHBOARD.
+"""Harness: dashboard opt-in via CHIPPI_DASHBOARD.
 
-Today (tini): dashboard starts once when HERMES_DASHBOARD=1; if it crashes
+Today (tini): dashboard starts once when CHIPPI_DASHBOARD=1; if it crashes
 it stays dead. After Phase 2 (s6): dashboard starts once; if it crashes
 it is restarted under supervision. The restart-after-crash test lives in
 Phase 2 Task 2.5; this file only locks the opt-in surface (which must
 not change between tini and s6).
 
-Every ``docker exec`` here runs as the unprivileged ``hermes`` user
+Every ``docker exec`` here runs as the unprivileged ``chippi`` user
 (via :func:`docker_exec`/:func:`docker_exec_sh` in conftest), matching
 the realistic runtime context. See the conftest module docstring.
 """
@@ -36,7 +36,7 @@ def _poll(container: str, probe: str, *, deadline_s: float = 30.0,
 def test_dashboard_not_running_by_default(
     built_image: str, container_name: str,
 ) -> None:
-    """Without HERMES_DASHBOARD, no dashboard process should be running."""
+    """Without CHIPPI_DASHBOARD, no dashboard process should be running."""
     subprocess.run(
         ["docker", "run", "-d", "--name", container_name, built_image,
          "sleep", "60"],
@@ -45,23 +45,23 @@ def test_dashboard_not_running_by_default(
     # Give the entrypoint enough time to finish bootstrap; if a dashboard
     # were going to start it'd be visible by now.
     time.sleep(5)
-    r = docker_exec(container_name, "pgrep", "-f", "hermes dashboard")
+    r = docker_exec(container_name, "pgrep", "-f", "chippi dashboard")
     # pgrep exits non-zero when no match found
     assert r.returncode != 0, (
-        "Dashboard should not be running without HERMES_DASHBOARD"
+        "Dashboard should not be running without CHIPPI_DASHBOARD"
     )
 
 
 def test_dashboard_slot_reports_down_when_disabled(
     built_image: str, container_name: str,
 ) -> None:
-    """Without HERMES_DASHBOARD, s6-svstat should report the dashboard
+    """Without CHIPPI_DASHBOARD, s6-svstat should report the dashboard
     slot as DOWN (not up-with-sleep-infinity, which would
-    false-positive `hermes doctor` and any other health check).
+    false-positive `chippi doctor` and any other health check).
 
     Locks the PR #30136 review item I3 fix: cont-init.d/03-dashboard-toggle
     writes a `down` marker file in the live service-dir when
-    HERMES_DASHBOARD is unset, so the slot reflects reality.
+    CHIPPI_DASHBOARD is unset, so the slot reflects reality.
     """
     subprocess.run(
         ["docker", "run", "-d", "--name", container_name, built_image,
@@ -76,7 +76,7 @@ def test_dashboard_slot_reports_down_when_disabled(
     )
     assert r.returncode == 0, f"s6-svstat failed: {r.stderr!r} / {r.stdout!r}"
     assert "down" in r.stdout, (
-        f"Dashboard slot should be 'down' without HERMES_DASHBOARD; "
+        f"Dashboard slot should be 'down' without CHIPPI_DASHBOARD; "
         f"svstat reports: {r.stdout!r}"
     )
 
@@ -84,10 +84,10 @@ def test_dashboard_slot_reports_down_when_disabled(
 def test_dashboard_slot_reports_up_when_enabled(
     built_image: str, container_name: str,
 ) -> None:
-    """Symmetry: with HERMES_DASHBOARD=1, s6-svstat reports the slot as up."""
+    """Symmetry: with CHIPPI_DASHBOARD=1, s6-svstat reports the slot as up."""
     subprocess.run(
         ["docker", "run", "-d", "--name", container_name,
-         "-e", "HERMES_DASHBOARD=1", built_image, "sleep", "120"],
+         "-e", "CHIPPI_DASHBOARD=1", built_image, "sleep", "120"],
         check=True, capture_output=True, timeout=30,
     )
     # uvicorn takes a moment to bind; poll svstat.
@@ -109,28 +109,28 @@ def test_dashboard_slot_reports_up_when_enabled(
 def test_dashboard_opt_in_starts(
     built_image: str, container_name: str,
 ) -> None:
-    """With HERMES_DASHBOARD=1, a dashboard process should be visible."""
+    """With CHIPPI_DASHBOARD=1, a dashboard process should be visible."""
     subprocess.run(
         ["docker", "run", "-d", "--name", container_name,
-         "-e", "HERMES_DASHBOARD=1", built_image, "sleep", "120"],
+         "-e", "CHIPPI_DASHBOARD=1", built_image, "sleep", "120"],
         check=True, capture_output=True, timeout=30,
     )
     # Poll for the dashboard subprocess to appear — the entrypoint
     # backgrounds it and bootstrap (skills sync etc.) can take a few
     # seconds before the python process actually launches.
     ok, _ = _poll(
-        container_name, "pgrep -f 'hermes dashboard'", deadline_s=30.0,
+        container_name, "pgrep -f 'chippi dashboard'", deadline_s=30.0,
     )
-    assert ok, "Dashboard should be running with HERMES_DASHBOARD=1"
+    assert ok, "Dashboard should be running with CHIPPI_DASHBOARD=1"
 
 
 def test_dashboard_port_override(
     built_image: str, container_name: str,
 ) -> None:
-    """HERMES_DASHBOARD_PORT changes the dashboard's listen port."""
+    """CHIPPI_DASHBOARD_PORT changes the dashboard's listen port."""
     subprocess.run(
         ["docker", "run", "-d", "--name", container_name,
-         "-e", "HERMES_DASHBOARD=1", "-e", "HERMES_DASHBOARD_PORT=9120",
+         "-e", "CHIPPI_DASHBOARD=1", "-e", "CHIPPI_DASHBOARD_PORT=9120",
          built_image, "sleep", "120"],
         check=True, capture_output=True, timeout=30,
     )
@@ -160,12 +160,12 @@ def test_dashboard_restarts_after_crash(
     """
     subprocess.run(
         ["docker", "run", "-d", "--name", container_name,
-         "-e", "HERMES_DASHBOARD=1", built_image, "sleep", "120"],
+         "-e", "CHIPPI_DASHBOARD=1", built_image, "sleep", "120"],
         check=True, capture_output=True, timeout=30,
     )
     # Wait for the first dashboard to come up.
     ok, _ = _poll(
-        container_name, "pgrep -f 'hermes dashboard'", deadline_s=30.0,
+        container_name, "pgrep -f 'chippi dashboard'", deadline_s=30.0,
     )
     assert ok, "Dashboard never started initially"
 
@@ -175,7 +175,7 @@ def test_dashboard_restarts_after_crash(
     first_pid: str | None = None
     for _attempt in range(10):
         first_pid_result = docker_exec(
-            container_name, "pgrep", "-f", "hermes dashboard",
+            container_name, "pgrep", "-f", "chippi dashboard",
         )
         first_pids = first_pid_result.stdout.strip().split()
         if first_pids:
@@ -184,15 +184,15 @@ def test_dashboard_restarts_after_crash(
         time.sleep(0.5)
     assert first_pid is not None, "Could not capture initial dashboard PID"
 
-    # Kill the dashboard. The dashboard process runs as hermes, so the
-    # hermes user can kill it (same UID).
+    # Kill the dashboard. The dashboard process runs as chippi, so the
+    # chippi user can kill it (same UID).
     docker_exec(container_name, "kill", "-9", first_pid)
 
     # s6 backs off ~1s before restart; allow up to 15s for the new
     # process to appear with a different PID.
     deadline = time.monotonic() + 15.0
     while time.monotonic() < deadline:
-        r = docker_exec(container_name, "pgrep", "-f", "hermes dashboard")
+        r = docker_exec(container_name, "pgrep", "-f", "chippi dashboard")
         pids = r.stdout.strip().split() if r.returncode == 0 else []
         if pids and pids[0] != first_pid:
             return  # success

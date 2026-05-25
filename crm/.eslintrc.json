@@ -1,0 +1,26 @@
+{
+  "extends": "next/core-web-vitals",
+  "ignorePatterns": [
+    ".next/",
+    "node_modules/",
+    "agent/",
+    "plugins/",
+    "scripts/",
+    "supabase/"
+  ],
+  "rules": {
+    "@next/next/no-html-link-for-pages": "off",
+    "no-restricted-imports": [
+      "error",
+      {
+        "paths": [
+          {
+            "name": "lucide-react",
+            "importNames": ["Sparkles"],
+            "message": "The generic AI sparkle is banned — it reads as vibecoded. Use the icon for the real action, or MessageCircle for the Chippi mark."
+          }
+        ]
+      }
+    ]
+  }
+}
