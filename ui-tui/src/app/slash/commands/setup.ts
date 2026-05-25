@@ -1,4 +1,4 @@
-import { withInkSuspended } from '@chippi/ink'
+import { withInkSuspended } from '@hermes/ink'
 
 import { launchChippiCommand } from '../../../lib/externalCli.js'
 import { runExternalSetup } from '../../setupHandoff.js'

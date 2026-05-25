@@ -35,10 +35,10 @@ await build({
   outfile: out,
   jsx: 'automatic',
   jsxImportSource: 'react',
-  // Skip the prebuilt @chippi/ink bundle — esbuild's __esm helper doesn't
+  // Skip the prebuilt @hermes/ink bundle — esbuild's __esm helper doesn't
   // await nested async init, which breaks lazy-initialized exports like
   // `render`. Bundling from source sidesteps that.
-  alias: { '@chippi/ink': resolve(root, 'packages/chippi-ink/src/entry-exports.ts') },
+  alias: { '@hermes/ink': resolve(root, 'packages/hermes-ink/src/entry-exports.ts') },
   plugins: [stubDevtools],
   // Some transitive deps use CommonJS `require(...)` at runtime. ESM bundles
   // don't get a `require` binding automatically, so we inject one.

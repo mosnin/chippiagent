@@ -1,4 +1,4 @@
-import { Box, Text, useInput, useStdout } from '@chippi/ink'
+import { Box, Text, useInput, useStdout } from '@hermes/ink'
 import { useEffect, useMemo, useState } from 'react'
 
 import { providerDisplayNames } from '../domain/providers.js'

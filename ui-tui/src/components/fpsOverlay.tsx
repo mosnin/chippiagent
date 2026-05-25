@@ -1,6 +1,6 @@
 // FPS counter overlay (CHIPPI_TUI_FPS=1). Zero-cost when disabled.
 
-import { Text } from '@chippi/ink'
+import { Text } from '@hermes/ink'
 import { useStore } from '@nanostores/react'
 
 import { SHOW_FPS } from '../config/env.js'

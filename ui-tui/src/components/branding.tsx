@@ -1,4 +1,4 @@
-import { Box, Text, useStdout } from '@chippi/ink'
+import { Box, Text, useStdout } from '@hermes/ink'
 import { useEffect, useState } from 'react'
 import unicodeSpinners from 'unicode-animations'
 

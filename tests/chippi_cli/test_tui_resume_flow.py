@@ -902,10 +902,10 @@ def test_launch_tui_sets_resume_env_from_resume_arg(monkeypatch, main_mod):
     assert captured["env"]["CHIPPI_TUI_RESUME"] == "20260518_000000_goodid"
 
 
-def test_make_tui_argv_dev_prebuilds_chippi_ink(monkeypatch, main_mod, tmp_path):
+def test_make_tui_argv_dev_prebuilds_hermes_ink(monkeypatch, main_mod, tmp_path):
     tui_dir = tmp_path / "ui-tui"
     tsx = tui_dir / "node_modules" / ".bin" / "tsx"
-    ink_dir = tui_dir / "packages" / "chippi-ink"
+    ink_dir = tui_dir / "packages" / "hermes-ink"
     tsx.parent.mkdir(parents=True)
     ink_dir.mkdir(parents=True)
     tsx.write_text("#!/usr/bin/env node\n", encoding="utf-8")

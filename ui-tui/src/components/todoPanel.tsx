@@ -1,4 +1,4 @@
-import { Box, Text } from '@chippi/ink'
+import { Box, Text } from '@hermes/ink'
 import { memo, useState } from 'react'
 
 import { countPendingTodos } from '../lib/liveProgress.js'
