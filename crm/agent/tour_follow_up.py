@@ -16,7 +16,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from first_touch import first_name_of, normalize_tone, send_sms
+from first_touch import first_name_of, listing_from_tour_or_contact, normalize_tone, send_sms
 
 TOUR_COMPLETED_EVENT = "tour_completed"
 _DEDUPE_WINDOW_HOURS = 48
@@ -160,35 +160,6 @@ def _skipped(contact_id: str, reason: str) -> dict[str, Any]:
     }
 
 
-def _property_from_tour_or_contact(
-    tour: dict[str, Any] | None,
-    contact: dict[str, Any],
-) -> str | None:
-    if tour:
-        address = (tour.get("propertyAddress") or "").strip()
-        if address:
-            return address
-    address = (contact.get("address") or "").strip()
-    if address:
-        return address
-    for item in contact.get("properties") or []:
-        if isinstance(item, str) and item.strip():
-            return item.strip()
-    data = contact.get("applicationData")
-    if isinstance(data, dict):
-        for key in (
-            "address",
-            "propertyAddress",
-            "listingAddress",
-            "property",
-            "interestedProperty",
-        ):
-            value = data.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-    return None
-
-
 async def ensure_tour_follow_up_draft(
     space_id: str,
     contact_id: str,
@@ -205,7 +176,7 @@ async def ensure_tour_follow_up_draft(
 
     check = await (
         db.table("Contact")
-        .select("id,name,phone,address,properties,applicationData")
+        .select("id,name,phone,address,preferences,properties,applicationData")
         .eq("id", contact_id)
         .eq("spaceId", space_id)
         .maybe_single()
@@ -294,7 +265,7 @@ async def ensure_tour_follow_up_draft(
         contact_first_name=first_name_of(contact.get("name"), "there"),
         agent_first_name=agent_name,
         tone=normalize_tone(profile.get("communicationTone")),
-        property_name=_property_from_tour_or_contact(tour, contact),
+        property_name=listing_from_tour_or_contact(tour, contact),
         business_name=business,
     )
     if not content.strip():

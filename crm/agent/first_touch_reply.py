@@ -19,6 +19,7 @@ from typing import Any
 from first_touch import (
     compose_first_touch_sms,
     first_name_of,
+    listing_from_contact,
     normalize_tone,
     propose_two_showing_windows,
     send_sms,
@@ -215,28 +216,6 @@ def first_touch_reply_instruction(triggers: list[dict]) -> str | None:
     )
 
 
-def _property_from_contact(contact: dict[str, Any]) -> str | None:
-    address = (contact.get("address") or "").strip()
-    if address:
-        return address
-    for item in contact.get("properties") or []:
-        if isinstance(item, str) and item.strip():
-            return item.strip()
-    data = contact.get("applicationData")
-    if isinstance(data, dict):
-        for key in (
-            "address",
-            "propertyAddress",
-            "listingAddress",
-            "property",
-            "interestedProperty",
-        ):
-            value = data.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-    return None
-
-
 def _skipped(contact_id: str, reason: str) -> dict[str, Any]:
     return {
         "action": "skipped",
@@ -271,7 +250,7 @@ async def ensure_first_touch_reply_draft(
 
     check = await (
         db.table("Contact")
-        .select("id,name,phone,address,properties,applicationData")
+        .select("id,name,phone,address,preferences,properties,applicationData")
         .eq("id", contact_id)
         .eq("spaceId", space_id)
         .maybe_single()
@@ -400,7 +379,7 @@ async def ensure_first_touch_reply_draft(
         tone=normalize_tone(profile.get("communicationTone")),
         windows=windows,
         picked=picked,
-        property_name=_property_from_contact(contact),
+        property_name=listing_from_contact(contact),
         business_name=business,
     )
     if not content.strip():

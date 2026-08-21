@@ -15,6 +15,8 @@ from first_touch import (
     first_touch_instruction,
     format_window_label,
     is_inbound_lead_event,
+    listing_from_contact,
+    listing_from_tour_or_contact,
     propose_two_showing_windows,
     send_sms,
 )
@@ -136,6 +138,50 @@ def test_send_sms_fails_when_credentials_missing(monkeypatch):
     monkeypatch.delenv("TELNYX_FROM_NUMBER", raising=False)
     with pytest.raises(ValueError, match="credentials missing"):
         asyncio.run(send_sms(to="+15555550123", body="hi", label="first-touch"))
+
+
+def test_listing_from_contact_uses_applied_listing_not_home():
+    assert (
+        listing_from_contact(
+            {
+                "address": "55 Oak St Apt 2",
+                "preferences": "1422 Pine",
+                "properties": [],
+                "applicationData": {
+                    "address": "55 Oak St Apt 2",
+                    "currentAddress": "55 Oak St Apt 2",
+                    "propertyAddress": "1422 Pine",
+                },
+            }
+        )
+        == "1422 Pine"
+    )
+    assert (
+        listing_from_contact(
+            {
+                "address": "55 Oak St Apt 2",
+                "preferences": None,
+                "properties": [],
+                "applicationData": {"currentAddress": "55 Oak St Apt 2"},
+            }
+        )
+        is None
+    )
+    assert listing_from_contact({"address": "55 Oak", "properties": ["900 Market"]}) == "900 Market"
+    assert (
+        listing_from_tour_or_contact(
+            {"propertyAddress": "1422 Pine"},
+            {"address": "55 Oak", "applicationData": {"propertyAddress": "400 West"}},
+        )
+        == "1422 Pine"
+    )
+    assert (
+        listing_from_tour_or_contact(
+            {"propertyAddress": None},
+            {"address": "55 Oak", "applicationData": {"propertyAddress": "400 West"}},
+        )
+        == "400 West"
+    )
 
 
 def test_format_window_label_is_concrete():

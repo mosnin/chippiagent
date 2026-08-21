@@ -231,9 +231,13 @@ describe('draftFirstTouchReplyForLead', () => {
           id: 'c1',
           name: 'Sam Rivera',
           phone: '+15555550123',
-          address: '1422 Pine',
+          address: '55 Oak St Apt 2',
+          preferences: '1422 Pine',
           properties: [],
-          applicationData: null,
+          applicationData: {
+            propertyAddress: '1422 Pine',
+            currentAddress: '55 Oak St Apt 2',
+          },
           spaceId: 's1',
         },
       },
@@ -264,6 +268,20 @@ describe('draftFirstTouchReplyForLead', () => {
       Space: { single: { name: 'Pine Realty' } },
     };
   }
+
+  it('re-offers the applied listing, not the lead home address', async () => {
+    seedHappyPath();
+    const result = await draftFirstTouchReplyForLead({
+      spaceId: 's1',
+      contactId: 'c1',
+      replyText: 'yes interested',
+      now: new Date('2026-08-21T15:00:00Z'),
+    });
+    expect(result.sent).toBe(true);
+    expect(result.picked).toBeUndefined();
+    expect(result.content).toContain('1422 Pine');
+    expect(result.content).not.toContain('55 Oak');
+  });
 
   it('fails if a first-touch reply produces no SMS', async () => {
     seedHappyPath();

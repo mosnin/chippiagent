@@ -76,6 +76,8 @@ import {
   firstNameOf,
   formatWindowLabel,
   isInboundFirstTouchEvent,
+  listingFromContact,
+  listingFromTourOrContact,
   normalizeTone,
   proposeTwoShowingWindows,
 } from '@/lib/agent/first-touch';
@@ -239,9 +241,13 @@ describe('draftFirstTouchForLead', () => {
           id: 'c1',
           name: 'Sam Rivera',
           phone: '+15555550123',
-          address: '1422 Pine',
+          address: '55 Oak St Apt 2',
+          preferences: '1422 Pine',
           properties: [],
-          applicationData: null,
+          applicationData: {
+            propertyAddress: '1422 Pine',
+            currentAddress: '55 Oak St Apt 2',
+          },
           spaceId: 's1',
         },
       },
@@ -276,6 +282,8 @@ describe('draftFirstTouchForLead', () => {
     expect(result.content).toContain(result.windows[0]);
     expect(result.content).toContain(result.windows[1]);
     expect(result.content).toContain('Jordan');
+    expect(result.content).toContain('1422 Pine');
+    expect(result.content).not.toContain('55 Oak');
     expect(sendSMS).toHaveBeenCalledWith({
       to: '+15555550123',
       body: result.content,
@@ -413,6 +421,72 @@ describe('draftFirstTouchForLead', () => {
     expect(updatedDraft?.content).toBe(result.content);
     expect(updatedDraft?.status).toBe('sent');
     expect(updatedDraft?.status).not.toBe('pending');
+  });
+});
+
+describe('listingFromContact', () => {
+  it('uses the applied listing, not the lead home address', () => {
+    expect(
+      listingFromContact({
+        address: '55 Oak St Apt 2',
+        preferences: '1422 Pine',
+        properties: [],
+        applicationData: {
+          address: '55 Oak St Apt 2',
+          currentAddress: '55 Oak St Apt 2',
+          propertyAddress: '1422 Pine',
+        },
+      }),
+    ).toBe('1422 Pine');
+  });
+
+  it('omits a listing rather than sending the home address', () => {
+    expect(
+      listingFromContact({
+        address: '55 Oak St Apt 2',
+        preferences: null,
+        properties: [],
+        applicationData: { currentAddress: '55 Oak St Apt 2' },
+      }),
+    ).toBeUndefined();
+  });
+
+  it('falls back to realtor-tagged properties, then preferences', () => {
+    expect(
+      listingFromContact({
+        address: '55 Oak',
+        properties: ['900 Market'],
+        applicationData: null,
+      }),
+    ).toBe('900 Market');
+    expect(
+      listingFromContact({
+        address: '55 Oak',
+        preferences: '400 West',
+        properties: [],
+      }),
+    ).toBe('400 West');
+  });
+
+  it('prefers the tour listing over contact fields', () => {
+    expect(
+      listingFromTourOrContact(
+        { propertyAddress: '1422 Pine' },
+        {
+          address: '55 Oak St Apt 2',
+          applicationData: { propertyAddress: '400 West' },
+        },
+      ),
+    ).toBe('1422 Pine');
+    expect(
+      listingFromTourOrContact(
+        { propertyAddress: null },
+        {
+          address: '55 Oak St Apt 2',
+          applicationData: { propertyAddress: '400 West' },
+        },
+      ),
+    ).toBe('400 West');
   });
 });
 
