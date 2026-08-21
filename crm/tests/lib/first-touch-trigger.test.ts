@@ -8,6 +8,9 @@ vi.mock('@/lib/agent/first-touch', () => ({
 vi.mock('@/lib/agent/first-touch-reply', () => ({
   draftFirstTouchReplyForLead: vi.fn(),
 }));
+vi.mock('@/lib/agent/tour-follow-up', () => ({
+  draftTourFollowUpForContact: vi.fn(),
+}));
 
 import { fireAgentTrigger } from '@/lib/agent/fire-trigger';
 

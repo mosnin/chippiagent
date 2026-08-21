@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const draftFirstTouchForLead = vi.fn();
 const draftFirstTouchReplyForLead = vi.fn();
+const draftTourFollowUpForContact = vi.fn();
 
 vi.mock('@/lib/agent/first-touch', () => ({
   draftFirstTouchForLead: (...args: unknown[]) => draftFirstTouchForLead(...args),
@@ -10,7 +11,7 @@ vi.mock('@/lib/agent/first-touch-reply', () => ({
   draftFirstTouchReplyForLead: (...args: unknown[]) => draftFirstTouchReplyForLead(...args),
 }));
 vi.mock('@/lib/agent/tour-follow-up', () => ({
-  draftTourFollowUpForContact: vi.fn(),
+  draftTourFollowUpForContact: (...args: unknown[]) => draftTourFollowUpForContact(...args),
 }));
 
 import { fireAgentTrigger } from '@/lib/agent/fire-trigger';
@@ -28,15 +29,14 @@ beforeEach(() => {
   };
   draftFirstTouchForLead.mockReset();
   draftFirstTouchReplyForLead.mockReset();
-  draftFirstTouchReplyForLead.mockResolvedValue({
+  draftTourFollowUpForContact.mockReset();
+  draftTourFollowUpForContact.mockResolvedValue({
     action: 'drafted',
-    draftId: 'd_reply',
+    draftId: 'd_tour',
     contactId: 'c1',
     channel: 'sms',
     status: 'pending',
-    content: 'Hi Sam — Jordan here. Tue 11am still work for you?',
-    windows: ['Tue 11am'],
-    picked: 'Tue 11am',
+    content: 'Hi Sam — Jordan here. Thoughts on 1422 Pine? Ready to talk next?',
     sent: false,
   });
 });
@@ -59,51 +59,46 @@ function kvFetch() {
   });
 }
 
-describe('fireAgentTrigger first-touch reply', () => {
-  it('drafts a pending booking SMS on inbound_message and never sends', async () => {
+describe('fireAgentTrigger tour-follow-up', () => {
+  it('drafts a pending follow-up SMS on tour_completed and never sends', async () => {
     vi.stubGlobal('fetch', kvFetch());
     const result = await fireAgentTrigger({
       spaceId: 's1',
-      event: 'inbound_message',
+      event: 'tour_completed',
       contactId: 'c1',
-      content: 'Tue 11am works',
-      channel: 'sms',
-      sourceDraftId: 'd_first',
+      tourId: 't1',
     });
     expect(draftFirstTouchForLead).not.toHaveBeenCalled();
-    expect(draftFirstTouchReplyForLead).toHaveBeenCalledWith({
+    expect(draftFirstTouchReplyForLead).not.toHaveBeenCalled();
+    expect(draftTourFollowUpForContact).toHaveBeenCalledWith({
       spaceId: 's1',
       contactId: 'c1',
-      replyText: 'Tue 11am works',
-      sourceDraftId: 'd_first',
-      channel: 'sms',
+      tourId: 't1',
     });
-    expect(result.firstTouchReply?.sent).toBe(false);
-    expect(result.firstTouchReply?.status).toBe('pending');
-    expect(result.firstTouchReply?.content?.trim().length).toBeGreaterThan(0);
+    expect(result.tourFollowUp?.sent).toBe(false);
+    expect(result.tourFollowUp?.status).toBe('pending');
+    expect(result.tourFollowUp?.content?.trim().length).toBeGreaterThan(0);
+    expect(result.tourFollowUp?.content).not.toMatch(/\b(sent|live|booked|reserved|locked|held)\b/i);
     expect(result.queued).toBe(true);
   });
 
-  it('fails if a lead reply produces no draft', async () => {
+  it('does not draft a tour follow-up on new_lead or inbound_message', async () => {
     vi.stubGlobal('fetch', kvFetch());
-    const result = await fireAgentTrigger({
+    await fireAgentTrigger({ spaceId: 's1', event: 'new_lead', contactId: 'c1' });
+    await fireAgentTrigger({
       spaceId: 's1',
       event: 'inbound_message',
       contactId: 'c1',
-      content: 'yes',
       channel: 'sms',
     });
-    expect(draftFirstTouchReplyForLead).toHaveBeenCalledTimes(1);
-    expect(result.firstTouchReply).toBeTruthy();
-    expect(result.firstTouchReply?.action).toBe('drafted');
-    expect(result.firstTouchReply?.content?.trim().length).toBeGreaterThan(0);
-    expect(result.firstTouchReply?.sent).toBe(false);
+    expect(draftTourFollowUpForContact).not.toHaveBeenCalled();
   });
 
-  it('does not draft a first-touch reply on new_lead', async () => {
+  it('does not draft deal_stage_changed or goal_completed in this slice', async () => {
     vi.stubGlobal('fetch', kvFetch());
-    await fireAgentTrigger({ spaceId: 's1', event: 'new_lead', contactId: 'c1' });
-    expect(draftFirstTouchReplyForLead).not.toHaveBeenCalled();
+    await fireAgentTrigger({ spaceId: 's1', event: 'deal_stage_changed', contactId: 'c1' });
+    await fireAgentTrigger({ spaceId: 's1', event: 'goal_completed', contactId: 'c1' });
+    expect(draftTourFollowUpForContact).not.toHaveBeenCalled();
   });
 
   it('still drafts when Redis is down — the text cannot wait on the queue', async () => {
@@ -111,16 +106,15 @@ describe('fireAgentTrigger first-touch reply', () => {
     delete process.env.KV_REST_API_TOKEN;
     const result = await fireAgentTrigger({
       spaceId: 's1',
-      event: 'inbound_message',
+      event: 'tour_completed',
       contactId: 'c1',
-      content: 'Tue 11am',
-      channel: 'sms',
+      tourId: 't1',
     });
-    expect(draftFirstTouchReplyForLead).toHaveBeenCalled();
+    expect(draftTourFollowUpForContact).toHaveBeenCalled();
     expect(result.queued).toBe(false);
     expect(result.reason).toBe('redis_not_configured');
-    expect(result.firstTouchReply?.status).toBe('pending');
-    expect(result.firstTouchReply?.sent).toBe(false);
-    expect(result.firstTouchReply?.content?.trim().length).toBeGreaterThan(0);
+    expect(result.tourFollowUp?.status).toBe('pending');
+    expect(result.tourFollowUp?.sent).toBe(false);
+    expect(result.tourFollowUp?.content?.trim().length).toBeGreaterThan(0);
   });
 });

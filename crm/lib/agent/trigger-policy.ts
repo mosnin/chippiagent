@@ -16,12 +16,19 @@ export type InboundLeadEvent = (typeof INBOUND_LEAD_EVENTS)[number];
 /** A lead replied — if that reply is to first-touch, we owe a booking draft. */
 export const INBOUND_MESSAGE_EVENT = 'inbound_message' as const;
 
+/** A showing actually finished — we owe one pending follow-up SMS. */
+export const TOUR_COMPLETED_EVENT = 'tour_completed' as const;
+
 export function isInboundLeadEvent(value: string): value is InboundLeadEvent {
   return (INBOUND_LEAD_EVENTS as readonly string[]).includes(value);
 }
 
 export function isInboundMessageEvent(value: string): value is typeof INBOUND_MESSAGE_EVENT {
   return value === INBOUND_MESSAGE_EVENT;
+}
+
+export function isTourCompletedEvent(value: string): value is typeof TOUR_COMPLETED_EVENT {
+  return value === TOUR_COMPLETED_EVENT;
 }
 
 

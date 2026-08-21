@@ -189,6 +189,7 @@ export async function PATCH(
         spaceId: ctx.space.id,
         event: 'tour_completed',
         contactId: data.contactId ?? undefined,
+        tourId: data.id,
       });
     } catch (e) {
       console.error('[tours/PATCH] agent trigger failed:', e);

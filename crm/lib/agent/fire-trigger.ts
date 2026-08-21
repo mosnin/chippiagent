@@ -13,6 +13,8 @@
  *   1b. For `inbound_message` SMS replies to that first-touch, draft the
  *      next pending booking SMS (confirm their time or offer two windows).
  *      Never sent.
+ *   1c. For `tour_completed` with a contactId, draft one pending follow-up
+ *      SMS in the assigned realtor's voice. An ask, never a claim. Never sent.
  *   2. Rate-limit per space-per-minute (capped at RATE_LIMIT).
  *   3. Dedupe within DEDUPE_WINDOW_S using the bucket pattern.
  *   4. RPUSH the trigger to `agent:triggers:{spaceId}` (FIFO queue).
@@ -28,6 +30,7 @@
 import {
   isInboundLeadEvent,
   isInboundMessageEvent,
+  isTourCompletedEvent,
   isTriggerEvent,
   parseImmediateEvents,
   type TriggerEvent,
@@ -37,6 +40,10 @@ import {
   draftFirstTouchReplyForLead,
   type FirstTouchReplyDraftResult,
 } from '@/lib/agent/first-touch-reply';
+import {
+  draftTourFollowUpForContact,
+  type TourFollowUpDraftResult,
+} from '@/lib/agent/tour-follow-up';
 
 const RATE_LIMIT = 20;
 const RATE_WINDOW_S = 60;
@@ -50,6 +57,7 @@ export interface FireTriggerInput {
   content?: string;
   channel?: 'sms' | 'email';
   sourceDraftId?: string;
+  tourId?: string;
 }
 
 export interface FireTriggerResult {
@@ -59,6 +67,7 @@ export interface FireTriggerResult {
   reason?: string;
   firstTouch?: FirstTouchDraftResult;
   firstTouchReply?: FirstTouchReplyDraftResult;
+  tourFollowUp?: TourFollowUpDraftResult;
 }
 
 async function recordOutcome(
@@ -158,6 +167,22 @@ async function maybeDraftFirstTouchReply(
   }
 }
 
+async function maybeDraftTourFollowUp(
+  input: FireTriggerInput,
+): Promise<TourFollowUpDraftResult | undefined> {
+  if (!isTourCompletedEvent(input.event) || !input.contactId) return undefined;
+  try {
+    return await draftTourFollowUpForContact({
+      spaceId: input.spaceId,
+      contactId: input.contactId,
+      tourId: input.tourId,
+    });
+  } catch {
+    // The wake still matters. The autonomous run is the backstop.
+    return undefined;
+  }
+}
+
 export async function fireAgentTrigger(input: FireTriggerInput): Promise<FireTriggerResult> {
   if (!input.event || !isTriggerEvent(input.event)) {
     return { queued: false, reason: 'invalid_event' };
@@ -166,25 +191,26 @@ export async function fireAgentTrigger(input: FireTriggerInput): Promise<FireTri
     return { queued: false, reason: 'missing_space_id' };
   }
 
-  // First-touch / first-touch-reply are the product. Draft before the Redis
-  // wake so a lead still gets an approval-gated SMS when the queue is down.
+  // First-touch / reply / tour-follow-up are the product. Draft before the
+  // Redis wake so the approval-gated SMS exists when the queue is down.
   const firstTouch = await maybeDraftFirstTouch(input);
   const firstTouchReply = await maybeDraftFirstTouchReply(input);
+  const tourFollowUp = await maybeDraftTourFollowUp(input);
 
   const kvUrl = process.env.KV_REST_API_URL;
   const kvToken = process.env.KV_REST_API_TOKEN;
   if (!kvUrl || !kvToken) {
-    return { queued: false, reason: 'redis_not_configured', firstTouch, firstTouchReply };
+    return { queued: false, reason: 'redis_not_configured', firstTouch, firstTouchReply, tourFollowUp };
   }
 
   const allowed = await checkRateLimit(kvUrl, kvToken, input.spaceId);
   if (!allowed) {
-    return { queued: false, reason: 'rate_limited', firstTouch, firstTouchReply };
+    return { queued: false, reason: 'rate_limited', firstTouch, firstTouchReply, tourFollowUp };
   }
 
   if (await isDuplicate(kvUrl, kvToken, input)) {
     await recordOutcome(kvUrl, kvToken, input, 'deduped');
-    return { queued: true, deduped: true, firstTouch, firstTouchReply };
+    return { queued: true, deduped: true, firstTouch, firstTouchReply, tourFollowUp };
   }
 
   const trigger = JSON.stringify({
@@ -195,6 +221,7 @@ export async function fireAgentTrigger(input: FireTriggerInput): Promise<FireTri
     content: input.content ?? null,
     channel: input.channel ?? null,
     sourceDraftId: input.sourceDraftId ?? null,
+    tourId: input.tourId ?? null,
     queuedAt: new Date().toISOString(),
   });
   const key = `agent:triggers:${input.spaceId}`;
@@ -205,7 +232,7 @@ export async function fireAgentTrigger(input: FireTriggerInput): Promise<FireTri
     body: JSON.stringify([trigger]),
   });
   if (!pushRes.ok) {
-    return { queued: false, reason: 'redis_push_failed', firstTouch, firstTouchReply };
+    return { queued: false, reason: 'redis_push_failed', firstTouch, firstTouchReply, tourFollowUp };
   }
 
   const MODAL_WEBHOOK_URL = process.env.MODAL_WEBHOOK_URL ?? '';
@@ -226,5 +253,5 @@ export async function fireAgentTrigger(input: FireTriggerInput): Promise<FireTri
   }
 
   await recordOutcome(kvUrl, kvToken, input, firedImmediately ? 'queued_modal' : 'queued');
-  return { queued: true, firedImmediately, firstTouch, firstTouchReply };
+  return { queued: true, firedImmediately, firstTouch, firstTouchReply, tourFollowUp };
 }
