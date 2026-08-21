@@ -4,6 +4,7 @@ import { syncContact, deleteContactVector } from '@/lib/vectorize';
 import { getSpaceForUser } from '@/lib/space';
 import { requireAuth } from '@/lib/api-auth';
 import { audit } from '@/lib/audit';
+import { removeContactTags } from '@/lib/cas-write';
 import type { Contact } from '@/lib/types';
 
 export async function GET(
@@ -102,6 +103,56 @@ export async function PATCH(
     const existing = existingRows[0];
 
     const body = await req.json();
+
+    if (body.removeTags !== undefined) {
+      if (body.tags !== undefined) {
+        return NextResponse.json(
+          { error: 'Send removeTags or tags, not both' },
+          { status: 400 },
+        );
+      }
+      if (!Array.isArray(body.removeTags) || body.removeTags.length > 50) {
+        return NextResponse.json({ error: 'removeTags: max 50 entries' }, { status: 400 });
+      }
+      if (body.removeTags.some((t: unknown) => typeof t !== 'string' || t.length > 100)) {
+        return NextResponse.json({ error: 'removeTags must be strings (max 100 chars)' }, { status: 400 });
+      }
+      const removed = await removeContactTags({
+        id,
+        spaceId: space.id,
+        remove: body.removeTags as string[],
+      });
+      if (!removed.ok) {
+        if (removed.reason === 'not_found') {
+          return NextResponse.json({ error: 'Not found' }, { status: 404 });
+        }
+        if (removed.reason === 'conflict') {
+          return NextResponse.json(
+            { error: 'Contact changed while updating tags. Try again.' },
+            { status: 409 },
+          );
+        }
+        console.error('[contacts/PATCH] removeTags error:', removed.error);
+        return NextResponse.json({ error: 'Failed to update contact' }, { status: 500 });
+      }
+    }
+
+    const otherKeys = Object.keys(body).filter((k) => k !== 'removeTags');
+    if (otherKeys.length === 0) {
+      const { data: contactAfterRemove, error: refetchError } = await supabase
+        .from('Contact')
+        .select()
+        .eq('id', id)
+        .eq('spaceId', space.id)
+        .single();
+      if (refetchError) {
+        console.error('[contacts/PATCH] refetch error:', refetchError);
+        return NextResponse.json({ error: 'Failed to update contact' }, { status: 500 });
+      }
+      syncContact(contactAfterRemove as Contact).catch(console.error);
+      void audit({ actorClerkId: userId, action: 'UPDATE', resource: 'Contact', resourceId: id, spaceId: space.id, req });
+      return NextResponse.json(contactAfterRemove);
+    }
 
     // Build update object — only include fields present in the request body
     const updates: Record<string, unknown> = {

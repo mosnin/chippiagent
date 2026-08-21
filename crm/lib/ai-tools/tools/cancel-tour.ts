@@ -56,14 +56,23 @@ export const cancelTourTool = defineTool<typeof parameters, CancelTourResult>({
       };
     }
 
-    const { error: updateErr } = await supabase
+    const { data: cancelled, error: updateErr } = await supabase
       .from('Tour')
       .update({ status: 'cancelled', updatedAt: new Date().toISOString() })
       .eq('id', args.tourId)
-      .eq('spaceId', ctx.space.id);
+      .eq('spaceId', ctx.space.id)
+      .in('status', ['scheduled', 'confirmed'])
+      .select('id')
+      .maybeSingle();
     if (updateErr) {
       logger.error('[tools.cancel_tour] update failed', { tourId: args.tourId }, updateErr);
       return { summary: `Cancel failed: ${updateErr.message}`, display: 'error' };
+    }
+    if (!cancelled) {
+      return {
+        summary: `That tour was already completed or cancelled.`,
+        display: 'error',
+      };
     }
 
     if (tour.contactId) {

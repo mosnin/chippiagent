@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireBroker } from '@/lib/permissions';
 import { supabase } from '@/lib/supabase';
+import { prependContactNotes } from '@/lib/cas-write';
 import { z } from 'zod';
 
 const addNoteSchema = z.object({
@@ -110,47 +111,35 @@ export async function POST(req: NextRequest) {
     const prefix = `[Broker: ${brokerName} - ${dateStr}]`;
     const newNote = `${prefix} ${note}`;
 
-    // Prepend to existing notes (newest first)
-    const existingNotes = contact.notes ?? '';
-    const updatedNotes = existingNotes
-      ? `${newNote}\n\n${existingNotes}`
-      : newNote;
-
-    const { error: updateError } = await supabase
-      .from('Contact')
-      .update({
-        notes: updatedNotes,
-        updatedAt: now.toISOString(),
-      })
-      .eq('id', contactId);
-
-    if (updateError) throw updateError;
+    // Prepend with updatedAt CAS so a concurrent assign / realtor note
+    // edit cannot last-write-wins the other side's text.
+    const prepended = await prependContactNotes({
+      id: contactId,
+      prefix: newNote,
+    });
+    if (!prepended.ok) {
+      if (prepended.reason === 'conflict') {
+        return NextResponse.json(
+          { error: 'This contact changed while the note was saving. Try again.' },
+          { status: 409 },
+        );
+      }
+      if (prepended.reason === 'not_found') {
+        return NextResponse.json({ error: 'Contact not found' }, { status: 404 });
+      }
+      throw prepended.error ?? new Error('Failed to save note');
+    }
+    const updatedNotes = (prepended.row.notes as string | null) ?? newNote;
 
     // If this is an assigned lead, also add the note to the realtor's copy
     if (contact.spaceId === brokerSpaceId && contact.applicationStatusNote) {
       try {
         const meta = JSON.parse(contact.applicationStatusNote);
         if (meta.assignedContactId) {
-          const { data: realtorContact } = await supabase
-            .from('Contact')
-            .select('id, notes')
-            .eq('id', meta.assignedContactId)
-            .maybeSingle();
-
-          if (realtorContact) {
-            const realtorExisting = realtorContact.notes ?? '';
-            const realtorUpdated = realtorExisting
-              ? `${newNote}\n\n${realtorExisting}`
-              : newNote;
-
-            await supabase
-              .from('Contact')
-              .update({
-                notes: realtorUpdated,
-                updatedAt: now.toISOString(),
-              })
-              .eq('id', meta.assignedContactId);
-          }
+          await prependContactNotes({
+            id: meta.assignedContactId,
+            prefix: newNote,
+          });
         }
       } catch {
         // If parsing fails, skip syncing to realtor copy

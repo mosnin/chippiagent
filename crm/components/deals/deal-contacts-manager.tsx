@@ -66,13 +66,15 @@ export function DealContactsManager({ dealId, slug, initialContacts }: DealConta
     };
   }, [query, search]);
 
-  async function patchContacts(newContacts: LinkedContact[], previous: LinkedContact[]) {
-    const contactIds = newContacts.map((c) => c.id);
+  async function patchContactDelta(
+    delta: { addContactIds?: string[]; removeContactIds?: string[] },
+    previous: LinkedContact[],
+  ) {
     try {
       const res = await fetch(`/api/deals/${dealId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contactIds }),
+        body: JSON.stringify(delta),
       });
       if (!res.ok) {
         setContacts(previous);
@@ -91,7 +93,7 @@ export function DealContactsManager({ dealId, slug, initialContacts }: DealConta
       const previous = contacts;
       const updated = contacts.filter((c) => c.id !== result.id);
       setContacts(updated);
-      patchContacts(updated, previous);
+      patchContactDelta({ removeContactIds: [result.id] }, previous);
       return;
     }
     const previous = contacts;
@@ -104,7 +106,7 @@ export function DealContactsManager({ dealId, slug, initialContacts }: DealConta
     };
     const updated = [...contacts, newContact];
     setContacts(updated);
-    patchContacts(updated, previous);
+    patchContactDelta({ addContactIds: [result.id] }, previous);
   }
 
   /**
@@ -135,7 +137,7 @@ export function DealContactsManager({ dealId, slug, initialContacts }: DealConta
     const previous = contacts;
     const updated = contacts.filter((c) => c.id !== contactId);
     setContacts(updated);
-    patchContacts(updated, previous);
+    patchContactDelta({ removeContactIds: [contactId] }, previous);
   }
 
   return (

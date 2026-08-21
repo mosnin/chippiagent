@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireBroker, canManageLeads } from '@/lib/permissions';
 import { supabase } from '@/lib/supabase';
 import { getSpaceByOwnerId } from '@/lib/space';
+import { retryOnConflict } from '@/lib/cas-write';
 import { z } from 'zod';
 
 const unassignLeadSchema = z.object({
@@ -172,6 +173,58 @@ export async function POST(req: NextRequest) {
 
     const realtorName = assignedToName ?? assignedTo ?? 'Unknown';
 
+    // Claim the unassign on the broker row FIRST. Deleting the clone
+    // before this CAS left a window where a concurrent writer (or a
+    // failed unassign) could drop the clone while the original stayed
+    // tagged `assigned` with a dangling assignedContactId.
+    const dateStr = new Date().toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
+
+    const unassignResult = await retryOnConflict<Record<string, unknown> & { updatedAt: string }>({
+      table: 'Contact',
+      id: contactId,
+      readColumns: 'id, tags, notes, applicationStatus, applicationStatusNote, updatedAt',
+      build: (current) => {
+        const tags: string[] = (current.tags as string[] | null) ?? [];
+        if (!tags.includes('assigned')) return { abort: 'conflict' };
+        const now = new Date().toISOString();
+        const unassignmentNote = [
+          current.notes,
+          `\nUnassigned from ${realtorName} on ${dateStr} by ${adminName}`,
+        ]
+          .filter(Boolean)
+          .join('\n');
+        return {
+          patch: {
+            tags: [...tags.filter((t: string) => t !== 'assigned' && t !== 'new-lead'), 'unassigned'],
+            notes: unassignmentNote,
+            applicationStatus: 'unassigned',
+            applicationStatusNote: null,
+            updatedAt: now,
+          },
+          match: { updatedAt: current.updatedAt },
+        };
+      },
+    });
+    if (!unassignResult.ok) {
+      if (unassignResult.reason === 'conflict') {
+        return NextResponse.json(
+          { error: 'This lead is not currently assigned' },
+          { status: 409 },
+        );
+      }
+      if (unassignResult.reason === 'not_found') {
+        return NextResponse.json(
+          { error: 'Contact not found in your brokerage space' },
+          { status: 404 },
+        );
+      }
+      throw unassignResult.error ?? new Error('Failed to unassign lead');
+    }
+
     // ── Delete cloned contact from realtor's space ───────────────────────
     // First, clean up related DealContact links and Deals
     try {
@@ -227,38 +280,6 @@ export async function POST(req: NextRequest) {
         cleanupErr,
       });
     }
-
-    // ── Update broker contact: remove 'assigned', add 'unassigned' ───────
-    const now = new Date().toISOString();
-    const dateStr = new Date().toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    });
-
-    const unassignmentNote = [
-      brokerContact.notes,
-      `\nUnassigned from ${realtorName} on ${dateStr} by ${adminName}`,
-    ]
-      .filter(Boolean)
-      .join('\n');
-
-    const updatedTags = [
-      ...existingTags.filter((t: string) => t !== 'assigned' && t !== 'new-lead'),
-      'unassigned',
-    ];
-
-    const { error: updateError } = await supabase
-      .from('Contact')
-      .update({
-        tags: updatedTags,
-        notes: unassignmentNote,
-        applicationStatus: 'unassigned',
-        applicationStatusNote: null,
-        updatedAt: now,
-      })
-      .eq('id', contactId);
-    if (updateError) throw updateError;
 
     console.info('[unassign-lead] lead unassigned', {
       contactId,

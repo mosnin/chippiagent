@@ -7,6 +7,7 @@ import { Phone, Flame, Thermometer, Snowflake, HelpCircle, ArrowRight } from 'lu
 import Link from 'next/link';
 import type { Contact } from '@/lib/types';
 import { LeadsView } from '@/components/leads/leads-view';
+import { removeContactTags } from '@/lib/cas-write';
 import { PeopleTabs } from '@/components/people/people-tabs';
 import { H1, TITLE_FONT } from '@/lib/typography';
 
@@ -58,22 +59,16 @@ export default async function LeadsPage({
     );
   }
 
-  // Mark new leads as read (clear new-lead tag). One UPDATE per row — the
-  // existing tags differ between rows, so a single bulk update with one value
-  // would clobber them. Still cheap at ≤500 rows. Logged loudly so a silent
-  // failure mode (DB write fails, badge stays forever) gets caught.
+  // Mark new leads as read (clear new-lead tag). CAS-retry per row so a
+  // concurrent assign / tag write cannot be last-write-wins-clobbered by
+  // a stale tags snapshot from this page load.
   const unreadLeads = leads.filter((lead) => lead.tags.includes('new-lead'));
   if (unreadLeads.length) {
     try {
       await Promise.all(
-        unreadLeads.map((lead) => {
-          const newTags = (lead.tags ?? []).filter((t: string) => t !== 'new-lead');
-          return supabase
-            .from('Contact')
-            .update({ tags: newTags, updatedAt: new Date().toISOString() })
-            .eq('id', lead.id)
-            .eq('spaceId', space.id);
-        }),
+        unreadLeads.map((lead) =>
+          removeContactTags({ id: lead.id, spaceId: space.id, remove: ['new-lead'] }),
+        ),
       );
     } catch (err) {
       console.error('[leads] failed to clear new-lead tags', {
