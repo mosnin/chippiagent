@@ -4,8 +4,8 @@ spaceId is NEVER taken from LLM tool arguments. It is injected once when the
 agent run starts and flows through every tool call via RunContextWrapper.
 This prevents prompt-injection attacks from crossing tenant boundaries.
 
-Autonomy is fixed: every contact-facing action drafts. There is no per-space
-or per-agent override. Configuration is failure to decide.
+Autonomy is fixed: the orchestrator executes tools. There is no human
+confirm gate and no per-space override. Configuration is failure to decide.
 """
 
 from __future__ import annotations

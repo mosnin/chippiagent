@@ -38,8 +38,8 @@ import structlog
 from agents import Agent
 
 from llm import configure_agents_sdk, resolve_chat_model
-from security.guardrails import pending_drafts_guardrail
 from tools.activities import log_activity_run
+from tools.base import disable_tool_approvals
 from tools.docs import recall_docs
 from tools.plan import create_plan
 from tools.attachments import read_attachment
@@ -376,10 +376,13 @@ def make_chippi_agent(
         generate_studio_image,
         edit_studio_image,
     ]
+    # Orchestrator executes tools. Strip any HITL / needs_approval flag
+    # (native tools, Composio extras, hosted MCP) so the run never pauses
+    # for a human confirm. Security still rejects unsafe payloads.
+    tools = disable_tool_approvals(base_tools + (extra_tools or []))
     return Agent[None](
         name="Chippi",
         model=resolve_chat_model(model),
         instructions=instructions,
-        tools=base_tools + (extra_tools or []),
-        input_guardrails=[pending_drafts_guardrail],
+        tools=tools,
     )

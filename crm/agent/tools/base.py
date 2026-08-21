@@ -36,6 +36,7 @@ from typing import Any, Callable
 import structlog
 
 from errors import AgentError
+from security.guardrails import payload_is_unsafe
 
 log = structlog.get_logger(__name__)
 
@@ -335,3 +336,120 @@ def result_is_ok(output: Any) -> bool:
         if isinstance(parsed, dict):
             return "error" not in parsed
     return True
+
+
+# ── HITL removal — orchestrator executes, never waits for a human ─────────────────────────
+
+def disable_tool_approval(tool: Any) -> Any:
+    """Force a tool to run without a human confirm.
+
+    Covers FunctionTool.needs_approval, HostedMCPTool.require_approval /
+    tool_config, and on_approval callbacks (ShellTool / ApplyPatchTool).
+    """
+    if tool is None:
+        return tool
+    for attr in ("needs_approval", "needsApproval"):
+        if hasattr(tool, attr):
+            try:
+                setattr(tool, attr, False)
+            except (AttributeError, TypeError):
+                pass
+    if hasattr(tool, "require_approval"):
+        try:
+            tool.require_approval = False
+        except (AttributeError, TypeError):
+            pass
+    cfg = getattr(tool, "tool_config", None)
+    if isinstance(cfg, dict) and "require_approval" in cfg:
+        cfg["require_approval"] = "never"
+    if hasattr(tool, "on_approval"):
+        async def _always_approve(*_a: Any, **_k: Any) -> bool:
+            return True
+
+        try:
+            tool.on_approval = _always_approve
+        except (AttributeError, TypeError):
+            pass
+    return tool
+
+
+def disable_tool_approvals(tools: list[Any]) -> list[Any]:
+    """Strip HITL from every tool in a list. Returns the same list."""
+    for tool in tools:
+        disable_tool_approval(tool)
+    return tools
+
+
+def pending_tool_interruptions(result: Any) -> list[Any]:
+    """Pending tool-approval items on an SDK run result, or []."""
+    raw = getattr(result, "interruptions", None)
+    if not raw:
+        return []
+    return list(raw)
+
+
+def _tool_args(interruption: Any) -> Any:
+    raw = getattr(interruption, "arguments", None)
+    if raw is None:
+        raw_item = getattr(interruption, "raw_item", None) or getattr(
+            interruption, "rawItem", None
+        )
+        if raw_item is not None:
+            raw = getattr(raw_item, "arguments", None)
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            return raw
+    return raw
+
+
+def _approve_interruption(state: Any, item: Any) -> None:
+    approve = getattr(state, "approve", None)
+    if not callable(approve):
+        return
+    try:
+        approve(item, always_approve=True)
+    except TypeError:
+        approve(item)
+
+
+def _reject_interruption(state: Any, item: Any, reason: str) -> None:
+    reject = getattr(state, "reject", None)
+    if not callable(reject):
+        # Cannot leave this pending — approve would execute an unsafe payload.
+        # If the state has no reject, skip; the orchestrator must not stall.
+        return
+    try:
+        reject(item, rejection_message=reason)
+    except TypeError:
+        reject(item)
+
+
+def resolve_pending_tool_pauses(result: Any) -> Any | None:
+    """Resolve every pending tool pause so the run never waits on a human.
+
+    Unsafe/invalid payloads are rejected (security). Everything else —
+    including any 'needs human approval' gate — is approved. Returns a
+    resumable RunState, or None when there is nothing to resume.
+    """
+    interruptions = pending_tool_interruptions(result)
+    if not interruptions:
+        return None
+
+    if hasattr(result, "to_state") and callable(result.to_state):
+        state = result.to_state()
+    else:
+        state = getattr(result, "state", None)
+    if state is None:
+        log.warning("pending_tools_missing_state", count=len(interruptions))
+        return None
+
+    for item in interruptions:
+        unsafe = payload_is_unsafe(_tool_args(item))
+        if unsafe:
+            log.warning("pending_tool_rejected_unsafe", reason=unsafe)
+            _reject_interruption(state, item, unsafe)
+        else:
+            _approve_interruption(state, item)
+    return state

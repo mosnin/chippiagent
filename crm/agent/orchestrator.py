@@ -11,9 +11,10 @@ When the trigger list is empty the prompt puts Chippi in sweep mode — look
 for stale leads / stalled deals on its own.
 
 Runs are skipped when the agent is disabled for the space or its daily
-token budget is exhausted. Every contact-facing action drafts; nothing is
-sent without the realtor's approval — that draft-only boundary is the
-trust model, so there is no separate pre-run approval gate.
+token budget is exhausted. The orchestrator executes tools — there is no
+human-confirm gate, no pending-tool pause, and no 'needs approval' block.
+Security may reject a truly invalid or unsafe payload; it does not wait
+for a person to tap yes.
 
 Security: spaceId is set once in AgentContext and flows through
 RunContextWrapper. No tool ever accepts spaceId as an argument.
@@ -27,7 +28,7 @@ import uuid
 from datetime import datetime, timezone
 
 import structlog
-from agents import InputGuardrailTripwireTriggered, ModelSettings, RunConfig, Runner
+from agents import ModelSettings, RunConfig, Runner
 from openai import APIStatusError, RateLimitError
 from openai.types.shared import Reasoning
 
@@ -51,7 +52,7 @@ from tour_follow_up import (
 )
 from llm import extract_usage, fallback_models, resolve_chat_model
 from tools.streaming import publish_event
-from tools.base import result_is_ok
+from tools.base import resolve_pending_tool_pauses, result_is_ok
 from trajectories import normalize_tool_call, record_trajectory
 
 # ---------------------------------------------------------------------------
@@ -169,6 +170,15 @@ async def _run_with_fallback(
                     except Exception:
                         # Telemetry must never break the run.
                         pass
+            # SDK HITL surfaces pending tools as interruptions and stops.
+            # Approve (or reject unsafe payloads) and resume until none remain.
+            # Mark tools_ran first: once we approve, side effects are in
+            # flight — a 429 on resume must not replay the whole run.
+            if getattr(result, "interruptions", None):
+                tools_ran = True
+            result = await _execute_pending_tools(
+                agent, result, run_config, context, on_event
+            )
             return result
         except (RateLimitError, APIStatusError) as exc:
             status = getattr(exc, "status_code", None)
@@ -219,6 +229,43 @@ async def _run_with_fallback(
     raise RuntimeError("All models exhausted") from last_exc
 
 
+# Cap so a broken SDK that re-emits the same interruption cannot loop forever.
+# Hitting the cap ends the run (error path) — it does not wait for a human.
+_MAX_PENDING_TOOL_RESUMES = 32
+
+
+async def _execute_pending_tools(
+    agent,
+    result: object,
+    run_config: RunConfig,
+    context,
+    on_event=None,
+) -> object:
+    """Resume a streamed run until no tool is waiting on a human confirm.
+
+    The orchestrator executes. Security rejects invalid/unsafe payloads
+    inside resolve_pending_tool_pauses; everything else is approved.
+    """
+    resumes = 0
+    while True:
+        state = resolve_pending_tool_pauses(result)
+        if state is None:
+            return result
+        if resumes >= _MAX_PENDING_TOOL_RESUMES:
+            logger.warning("pending_tool_resume_cap", resumes=resumes)
+            return result
+        result = Runner.run_streamed(
+            agent, input=state, run_config=run_config, context=context
+        )
+        async for event in result.stream_events():
+            if on_event is not None:
+                try:
+                    on_event(event)
+                except Exception:
+                    pass
+        resumes += 1
+
+
 async def pop_triggers(space_id: str) -> list[dict]:
     """Pop pending event triggers for this space from Redis.
 
@@ -264,7 +311,8 @@ async def requeue_triggers(
     A crashed run would otherwise drop the realtor's events silently. When
     `increment_attempts` is set (a genuine failure) a per-trigger counter
     caps retries — a poison trigger is dropped after 3 attempts rather than
-    looping forever; a deferral (guardrail block) re-queues without counting.
+    looping forever. HITL / approval deferral is not a valid reason to
+    re-queue without counting — the orchestrator executes tools.
     """
     if not triggers:
         return
@@ -447,7 +495,7 @@ async def _run_locked(
     started_at = datetime.now(timezone.utc)
     # Tool-call accumulator for the trajectory record written at end-of-run.
     # Filled by on_event below; passed to record_trajectory on every exit
-    # path (success, error, guardrail-blocked). See agent/trajectories.py
+    # path (success, error). See agent/trajectories.py
     # for why this materialized record exists alongside the per-system logs.
     trajectory_tool_calls: list[dict] = []
     log = logger.bind(space_id=space.id, space_slug=space.slug, run_id=run_id)
@@ -646,31 +694,6 @@ async def _run_locked(
             final_summary = final_output[:280]
 
         log.info("agent_run_completed", total_tokens=total_tokens, model_used=chippi.model)
-
-    except InputGuardrailTripwireTriggered as exc:
-        info = exc.guardrail_result.output.output_info or {}
-        pending = info.get("pending_drafts", "?")
-        log.info("agent_run_blocked_input_guardrail", pending_drafts=pending)
-        # Deferred, not failed — re-queue the triggers (no attempt increment)
-        # so the events still get processed once the drafts are reviewed.
-        await requeue_triggers(space.id, triggers, increment_attempts=False)
-        await publish_event(
-            ctx, "info",
-            f"Run skipped — {pending} draft(s) awaiting review. Review your inbox first.",
-            agent_type="chippi",
-        )
-        await record_trajectory(
-            run_id=run_id,
-            space_id=space.id,
-            started_at=started_at,
-            status="guardrail_blocked",
-            trigger=(triggers[0] if triggers else None),
-            model=chippi.model,
-            total_tokens=total_tokens,
-            tool_calls=trajectory_tool_calls,
-            extra={"pending_drafts": pending},
-        )
-        return
 
     except Exception as exc:
         log.exception("agent_run_failed")
