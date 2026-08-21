@@ -111,8 +111,10 @@ export function CommandPalette({ slug }: Props) {
 
     searchRef.current = setTimeout(async () => {
       try {
-        // /api/search returns { contacts, deals, tours } in one call.
-        const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+        // /api/search requires slug — without it the route 400s and every lead is hidden.
+        const res = await fetch(
+          `/api/search?slug=${encodeURIComponent(slug)}&q=${encodeURIComponent(query)}`,
+        );
         if (!res.ok) { setRemote([]); return; }
         const payload = await res.json() as {
           contacts?: { id: string; name: string; email?: string | null; phone?: string | null }[];
