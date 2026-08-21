@@ -32,6 +32,8 @@ CREATE INDEX IF NOT EXISTS "Attachment_conversationId_idx"
   ON "Attachment" ("conversationId")
   WHERE "conversationId" IS NOT NULL;
 
+ALTER TABLE "Attachment" ENABLE ROW LEVEL SECURITY;
+
 -- ── 3. Brokerage offboarding (20260506000000) ─────────────────────────────────
 ALTER TABLE "User"
   ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active'
@@ -125,8 +127,10 @@ BEGIN
 END;
 $$;
 
+REVOKE ALL ON FUNCTION offboard_brokerage_member(text, text, text, boolean) FROM PUBLIC;
+REVOKE ALL ON FUNCTION offboard_brokerage_member(text, text, text, boolean) FROM authenticated;
 GRANT EXECUTE ON FUNCTION offboard_brokerage_member(text, text, text, boolean)
-  TO authenticated, service_role;
+  TO service_role;
 
 -- ── 4. Commission ledger (20260507000000) ─────────────────────────────────────
 ALTER TABLE "Brokerage"
@@ -565,6 +569,9 @@ CREATE TABLE IF NOT EXISTS "AgentQuestion" (
 CREATE INDEX IF NOT EXISTS "AgentQuestion_spaceId_status_idx" ON "AgentQuestion"("spaceId", "status");
 CREATE INDEX IF NOT EXISTS "AgentQuestion_contactId_idx"      ON "AgentQuestion"("contactId") WHERE "contactId" IS NOT NULL;
 
+ALTER TABLE "AgentGoal"     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "AgentQuestion" ENABLE ROW LEVEL SECURITY;
+
 ALTER TABLE "AgentDraft"
   ADD COLUMN IF NOT EXISTS "confidence"        INTEGER CHECK ("confidence" >= 0 AND "confidence" <= 100),
   ADD COLUMN IF NOT EXISTS "outcome"           VARCHAR(30) CHECK ("outcome" IN ('responded','no_response','bounced','unsubscribed','meeting_booked')),
@@ -597,6 +604,9 @@ CREATE INDEX IF NOT EXISTS "TelemetryEvent_event_createdAt_idx"
   ON "TelemetryEvent" (event, "createdAt" DESC);
 CREATE INDEX IF NOT EXISTS "TelemetryEvent_spaceId_event_idx"
   ON "TelemetryEvent" ("spaceId", event);
+
+ALTER TABLE "TelemetryEvent" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "AgentSettings"  ENABLE ROW LEVEL SECURITY;
 
 -- ── 16. AgentSettings autoseed (20260519000000) ──────────────────────────────
 INSERT INTO "AgentSettings" ("spaceId")
