@@ -110,6 +110,7 @@ beforeEach(() => {
   composeQuickDraftMock.mockReset();
   recallMemoryMock.mockReset();
   sendEmailFromCRMMock.mockReset();
+  sendEmailFromCRMMock.mockResolvedValue(undefined);
   sendSMSMock.mockReset();
   sendSMSMock.mockResolvedValue(true);
   process.env.RESEND_API_KEY = 're_test';
