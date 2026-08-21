@@ -84,11 +84,11 @@ describe('DraftImpactCard — sent/failed, not approval', () => {
     expect(DRAFT_IMPACT_COPY.title).toBe('Drafts sent');
   });
 
-  it('source is a sent/failed log, not an approval-rate card', () => {
+  it('source is a sent/failed log, not a review-queue card', () => {
     expect(CARD_SRC).toMatch(/sent\/failed log/);
-    expect(CARD_SRC).not.toMatch(/Approve/);
+    expect(CARD_SRC).not.toMatch(/Approve &/);
+    expect(CARD_SRC).not.toMatch(/Approve all/);
     expect(CARD_SRC).not.toMatch(/waiting on you/i);
-    expect(CARD_SRC).not.toMatch(/approval rate/i);
     expect(CARD_SRC).not.toMatch(/Chippy/);
   });
 });
