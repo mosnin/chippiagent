@@ -1,5 +1,47 @@
 import { describe, it, expect } from 'vitest';
-import { newLeadSMS, newTourSMS, tourConfirmationSMS, newDealSMS } from '@/lib/sms';
+import {
+  newLeadSMS,
+  newTourSMS,
+  tourConfirmationSMS,
+  newDealSMS,
+  toE164,
+  isBlockedSmsDestination,
+} from '@/lib/sms';
+
+describe('toE164', () => {
+  it('passes through a valid E.164 number', () => {
+    expect(toE164('+15551234567')).toBe('+15551234567');
+  });
+
+  it('normalizes the intake (XXX) XXX-XXXX shape', () => {
+    expect(toE164('(555) 123-4567')).toBe('+15551234567');
+  });
+
+  it('normalizes a 10-digit US number', () => {
+    expect(toE164('5551234567')).toBe('+15551234567');
+  });
+
+  it('normalizes an 11-digit number that already includes the US country code', () => {
+    expect(toE164('15551234567')).toBe('+15551234567');
+  });
+
+  it('normalizes +1 with spaces and dashes', () => {
+    expect(toE164('+1 (555) 123-4567')).toBe('+15551234567');
+  });
+
+  it('fails closed on junk and too-short input', () => {
+    expect(toE164('')).toBeNull();
+    expect(toE164('123')).toBeNull();
+    expect(toE164('not-a-phone')).toBeNull();
+  });
+});
+
+describe('isBlockedSmsDestination', () => {
+  it('blocks US premium-rate prefixes', () => {
+    expect(isBlockedSmsDestination('+19005551212')).toBe(true);
+    expect(isBlockedSmsDestination('+15551234567')).toBe(false);
+  });
+});
 
 describe('SMS template builders', () => {
   it('newLeadSMS targets the owner phone', () => {

@@ -8,13 +8,51 @@
 
 import { logger } from '@/lib/logger';
 
+const E164_RE = /^\+\d{10,15}$/;
+
+/** Premium-rate prefixes. Sending here is toll fraud — fail closed. */
+const PREMIUM_PREFIXES = ['+1900', '+1976', '+44870', '+44871', '+44872', '+44090', '+44091'];
+
+/**
+ * Normalize a stored or typed phone number to E.164.
+ *
+ * Intake and contact create persist whatever the realtor/lead typed —
+ * `(555) 123-4567`, `5551234567`, `+1 555 123 4567`. Telnyx rejects
+ * anything that isn't `+` plus 10–15 digits. Returns null when the
+ * input cannot be a destination (too short, junk, or not E.164 after
+ * US-default `+1`).
+ */
+export function toE164(input: string): string | null {
+  const cleaned = input.replace(/[^\d+]/g, '');
+  if (cleaned.length < 10) return null;
+
+  let candidate: string;
+  if (cleaned.startsWith('+')) {
+    candidate = cleaned;
+  } else if (/^\d{10}$/.test(cleaned)) {
+    candidate = `+1${cleaned}`;
+  } else if (/^1\d{10}$/.test(cleaned)) {
+    candidate = `+${cleaned}`;
+  } else if (/^\d{10,15}$/.test(cleaned)) {
+    candidate = `+${cleaned}`;
+  } else {
+    return null;
+  }
+
+  return E164_RE.test(candidate) ? candidate : null;
+}
+
+export function isBlockedSmsDestination(e164: string): boolean {
+  return PREMIUM_PREFIXES.some((prefix) => e164.startsWith(prefix));
+}
+
 // Log a clear warning at module load time if Telnyx env vars are missing
 if (!process.env.TELNYX_API_KEY) {
   logger.warn('[sms] TELNYX_API_KEY is not set — SMS notifications will be skipped');
 }
 if (!process.env.TELNYX_FROM_NUMBER) {
   logger.warn('[sms] TELNYX_FROM_NUMBER is not set — SMS notifications will be skipped');
-} else if (!/^\+\d{10,15}$/.test(process.env.TELNYX_FROM_NUMBER)) {
+} else if (!E164_RE.test(process.env.TELNYX_FROM_NUMBER)) {
   logger.warn('[sms] TELNYX_FROM_NUMBER is not a valid E.164 phone number');
 }
 
@@ -65,25 +103,13 @@ export async function sendSMS(params: SendSMSParams): Promise<boolean> {
     return false;
   }
 
-  // Basic phone validation — must look like a phone number
-  const cleaned = params.to.replace(/[^\d+]/g, '');
-  if (cleaned.length < 10) {
-    logger.warn('[sms] invalid phone number (too short)', { to: params.to });
+  const toNumber = toE164(params.to);
+  if (!toNumber) {
+    logger.warn('[sms] phone number not valid E.164', { to: params.to });
     return false;
   }
 
-  // Ensure E.164 format
-  const toNumber = cleaned.startsWith('+') ? cleaned : `+1${cleaned}`;
-
-  // Validate E.164 format: + followed by 10-15 digits
-  if (!/^\+\d{10,15}$/.test(toNumber)) {
-    logger.warn('[sms] phone number not valid E.164', { to: toNumber });
-    return false;
-  }
-
-  // Block premium-rate numbers to prevent toll fraud
-  const premiumPrefixes = ['+1900', '+1976', '+44870', '+44871', '+44872', '+44090', '+44091'];
-  if (premiumPrefixes.some((prefix) => toNumber.startsWith(prefix))) {
+  if (isBlockedSmsDestination(toNumber)) {
     logger.warn('[sms] blocked premium-rate number', { to: toNumber });
     return false;
   }

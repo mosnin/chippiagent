@@ -32,6 +32,7 @@ import {
   executeToolForEntity,
 } from '@/lib/integrations/composio';
 import { logger } from '@/lib/logger';
+import { isBlockedSmsDestination, toE164 } from '@/lib/sms';
 
 export interface DeliveryResult {
   sent: boolean;
@@ -197,6 +198,16 @@ async function deliverSms(
     return { sent: false, method: 'sms', error: 'Contact has no phone number' };
   }
 
+  // Contact.phone is stored as typed — intake formats `(555) 123-4567`.
+  // Telnyx requires E.164. Fail closed on anything we can't normalize.
+  const toNumber = toE164(contact.phone);
+  if (!toNumber) {
+    return { sent: false, method: 'sms', error: 'Phone number is not valid E.164' };
+  }
+  if (isBlockedSmsDestination(toNumber)) {
+    return { sent: false, method: 'sms', error: 'Blocked destination' };
+  }
+
   try {
     const res = await fetch('https://api.telnyx.com/v2/messages', {
       method: 'POST',
@@ -206,7 +217,7 @@ async function deliverSms(
       },
       body: JSON.stringify({
         from: fromNumber,
-        to: contact.phone,
+        to: toNumber,
         text: draft.content,
       }),
     });
