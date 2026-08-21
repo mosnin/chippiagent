@@ -450,6 +450,12 @@ async def _run_locked(
     # path (success, error, guardrail-blocked). See agent/trajectories.py
     # for why this materialized record exists alongside the per-system logs.
     trajectory_tool_calls: list[dict] = []
+    # Initialized before any await so a cancel during setup can still see it.
+    triggers: list[dict] = []
+    publish_tasks: list[asyncio.Task] = []
+    chippi = None
+    total_tokens = 0
+    final_summary: str | None = None
     log = logger.bind(space_id=space.id, space_slug=space.slug, run_id=run_id)
 
     if not await check_budget(space.id, agent_settings.daily_token_budget):
@@ -473,167 +479,166 @@ async def _run_locked(
     ctx = AgentContext.from_settings(agent_settings, run_id=run_id, space_name=space.name)
     # A routine run is scoped to its instruction — don't drain the trigger
     # queue out from under a trigger-driven run.
-    triggers = [] if instruction else await pop_triggers(space.id)
-    if triggers:
-        log.info("triggers_found", count=len(triggers), events=[t.get("event") for t in triggers])
-        for trigger in triggers:
-            if is_inbound_lead_event(trigger.get("event")) and trigger.get("contactId"):
-                try:
-                    ft = await ensure_first_touch_draft(space.id, trigger["contactId"])
-                    log.info(
-                        "first_touch_ensured",
-                        contact_id=trigger["contactId"],
-                        action=ft.get("action"),
-                        sent=ft.get("sent"),
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    log.warning(
-                        "first_touch_failed",
-                        contact_id=trigger.get("contactId"),
-                        error=str(exc)[:200],
-                    )
-            if is_inbound_message_event(trigger.get("event")) and trigger.get("contactId"):
-                try:
-                    reply = await ensure_first_touch_reply_draft(
-                        space.id,
-                        trigger["contactId"],
-                        reply_text=trigger.get("content"),
-                        source_draft_id=trigger.get("sourceDraftId"),
-                        channel=trigger.get("channel"),
-                    )
-                    log.info(
-                        "first_touch_reply_ensured",
-                        contact_id=trigger["contactId"],
-                        action=reply.get("action"),
-                        sent=reply.get("sent"),
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    log.warning(
-                        "first_touch_reply_failed",
-                        contact_id=trigger.get("contactId"),
-                        error=str(exc)[:200],
-                    )
-            if is_tour_completed_event(trigger.get("event")) and trigger.get("contactId"):
-                try:
-                    follow = await ensure_tour_follow_up_draft(
-                        space.id,
-                        trigger["contactId"],
-                        tour_id=trigger.get("tourId"),
-                    )
-                    log.info(
-                        "tour_follow_up_ensured",
-                        contact_id=trigger["contactId"],
-                        action=follow.get("action"),
-                        sent=follow.get("sent"),
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    log.warning(
-                        "tour_follow_up_failed",
-                        contact_id=trigger.get("contactId"),
-                        error=str(exc)[:200],
-                    )
-
-    log.info("agent_run_started", trigger_count=len(triggers), routine=bool(instruction))
-    await publish_event(
-        ctx, "info",
-        f"Starting run for '{space.name}'"
-        + (" — routine" if instruction else f" — {len(triggers)} trigger(s)" if triggers else " — sweep"),
-        agent_type="chippi",
-    )
-
-    # Load AI profile for personalization
-    db = await supabase()
-    ai_profile = await load_ai_profile(space.id, db)
-
-    # Autonomous runs have no "current user" — the workspace OWNER's
-    # Clerk userId is the entity whose Composio connections we use.
-    # Solo realtors: this is them. Brokerages: it's the broker_owner.
-    # Empty list when owner has no integrations or Composio is down.
-    integration_tools: list = []
     try:
-        from integrations import load_integration_tools, resolve_owner_user_id
+        triggers = [] if instruction else await pop_triggers(space.id)
+        if triggers:
+            log.info("triggers_found", count=len(triggers), events=[t.get("event") for t in triggers])
+            for trigger in triggers:
+                if is_inbound_lead_event(trigger.get("event")) and trigger.get("contactId"):
+                    try:
+                        ft = await ensure_first_touch_draft(space.id, trigger["contactId"])
+                        log.info(
+                            "first_touch_ensured",
+                            contact_id=trigger["contactId"],
+                            action=ft.get("action"),
+                            sent=ft.get("sent"),
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning(
+                            "first_touch_failed",
+                            contact_id=trigger.get("contactId"),
+                            error=str(exc)[:200],
+                        )
+                if is_inbound_message_event(trigger.get("event")) and trigger.get("contactId"):
+                    try:
+                        reply = await ensure_first_touch_reply_draft(
+                            space.id,
+                            trigger["contactId"],
+                            reply_text=trigger.get("content"),
+                            source_draft_id=trigger.get("sourceDraftId"),
+                            channel=trigger.get("channel"),
+                        )
+                        log.info(
+                            "first_touch_reply_ensured",
+                            contact_id=trigger["contactId"],
+                            action=reply.get("action"),
+                            sent=reply.get("sent"),
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning(
+                            "first_touch_reply_failed",
+                            contact_id=trigger.get("contactId"),
+                            error=str(exc)[:200],
+                        )
+                if is_tour_completed_event(trigger.get("event")) and trigger.get("contactId"):
+                    try:
+                        follow = await ensure_tour_follow_up_draft(
+                            space.id,
+                            trigger["contactId"],
+                            tour_id=trigger.get("tourId"),
+                        )
+                        log.info(
+                            "tour_follow_up_ensured",
+                            contact_id=trigger["contactId"],
+                            action=follow.get("action"),
+                            sent=follow.get("sent"),
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning(
+                            "tour_follow_up_failed",
+                            contact_id=trigger.get("contactId"),
+                            error=str(exc)[:200],
+                        )
 
-        owner_clerk_id = await resolve_owner_user_id(space.id)
-        if owner_clerk_id:
-            integration_tools = await load_integration_tools(space.id, owner_clerk_id)
-    except Exception as ie:  # noqa: BLE001
-        log.warning("autonomous_load_integration_tools_failed", error=str(ie)[:200])
-
-    # Workspace info — mirrors the chat path so autonomous drafts include
-    # the realtor's intake URL where it's useful.
-    _app_url = (settings.app_url or "").rstrip("/")
-    # A localhost app_url (NEXT_PUBLIC_APP_URL missing from the Modal secret)
-    # must never become a customer-facing intake link in a drafted message.
-    if "localhost" in _app_url or "127.0.0.1" in _app_url:
-        _app_url = ""
-    intake_url = f"{_app_url}/apply/{space.slug}" if _app_url and space.slug else ""
-    workspace_info = (
-        "# Your workspace\n"
-        f"- Workspace: {space.name} (slug: {space.slug})\n"
-        f"- Intake link (share with new leads): {intake_url}\n"
-        "- Include the intake link in any contact-facing draft where it"
-        " makes sense — when reaching out to a fresh lead, when asking a"
-        " prospect to qualify, when nudging someone who never finished"
-        " applying. Use the full URL verbatim; no shortening."
-    ) if intake_url else None
-
-    chippi = make_chippi_agent(
-        ai_profile_text=ai_profile,
-        extra_tools=integration_tools,
-        workspace_info=workspace_info,
-        model=resolve_chat_model(agent_settings.chat_model),
-    )
-    prompt = _build_opening_prompt(space, memory_context, triggers, instruction)
-
-    run_config = RunConfig(
-        max_turns=settings.coordinator_max_turns,
-        # Tracing exports only reach OpenAI's backend; disable on a pure-
-        # OpenRouter deploy, which may carry no OpenAI key at all.
-        tracing_disabled=bool(settings.openrouter_api_key),
-        model_settings=ModelSettings(
-            max_tokens=settings.max_output_tokens,
-            truncation="auto",
-            # Parity with the chat path. Autonomous runs make unsupervised
-            # judgement calls — they need reasoning effort at least as much
-            # as chat, where it was already set to "medium".
-            reasoning=Reasoning(effort="medium"),
-        ),
-    )
-
-    total_tokens = 0
-    final_summary: str | None = None
-
-    # Per-tool stream emitter — publishes each tool call/result to Redis so
-    # the realtor's activity feed and the broker dashboard see what Chippi
-    # actually did, not just one opaque "I ran a sweep" summary. Fire-and-
-    # forget so the HTTP round-trip never throttles the SDK loop.
-    #
-    # Also captures the tool call into the trajectory accumulator. The two
-    # paths share the same _translate_tool_event payload so the realtor's
-    # live view and the offline trajectory record stay in lockstep.
-    # Tasks are kept in `publish_tasks` and drained in the finally below — a
-    # bare un-referenced create_task can be garbage-collected mid-flight, and
-    # the Modal container can tear down before the last events flush.
-    publish_tasks: list[asyncio.Task] = []
-
-    def on_event(event: object) -> None:
-        payload = _translate_tool_event(event)
-        if payload is None:
-            return
-        trajectory_tool_calls.append(normalize_tool_call(payload))
-        publish_tasks.append(
-            asyncio.create_task(
-                publish_event(
-                    ctx,
-                    "action",
-                    payload["message"],
-                    metadata=payload["metadata"],
-                    agent_type="chippi",
-                )
-            )
+        log.info("agent_run_started", trigger_count=len(triggers), routine=bool(instruction))
+        await publish_event(
+            ctx, "info",
+            f"Starting run for '{space.name}'"
+            + (" — routine" if instruction else f" — {len(triggers)} trigger(s)" if triggers else " — sweep"),
+            agent_type="chippi",
         )
 
-    try:
+        # Load AI profile for personalization
+        db = await supabase()
+        ai_profile = await load_ai_profile(space.id, db)
+
+        # Autonomous runs have no "current user" — the workspace OWNER's
+        # Clerk userId is the entity whose Composio connections we use.
+        # Solo realtors: this is them. Brokerages: it's the broker_owner.
+        # Empty list when owner has no integrations or Composio is down.
+        integration_tools: list = []
+        try:
+            from integrations import load_integration_tools, resolve_owner_user_id
+
+            owner_clerk_id = await resolve_owner_user_id(space.id)
+            if owner_clerk_id:
+                integration_tools = await load_integration_tools(space.id, owner_clerk_id)
+        except Exception as ie:  # noqa: BLE001
+            log.warning("autonomous_load_integration_tools_failed", error=str(ie)[:200])
+
+        # Workspace info — mirrors the chat path so autonomous drafts include
+        # the realtor's intake URL where it's useful.
+        _app_url = (settings.app_url or "").rstrip("/")
+        # A localhost app_url (NEXT_PUBLIC_APP_URL missing from the Modal secret)
+        # must never become a customer-facing intake link in a drafted message.
+        if "localhost" in _app_url or "127.0.0.1" in _app_url:
+            _app_url = ""
+        intake_url = f"{_app_url}/apply/{space.slug}" if _app_url and space.slug else ""
+        workspace_info = (
+            "# Your workspace\n"
+            f"- Workspace: {space.name} (slug: {space.slug})\n"
+            f"- Intake link (share with new leads): {intake_url}\n"
+            "- Include the intake link in any contact-facing draft where it"
+            " makes sense — when reaching out to a fresh lead, when asking a"
+            " prospect to qualify, when nudging someone who never finished"
+            " applying. Use the full URL verbatim; no shortening."
+        ) if intake_url else None
+
+        chippi = make_chippi_agent(
+            ai_profile_text=ai_profile,
+            extra_tools=integration_tools,
+            workspace_info=workspace_info,
+            model=resolve_chat_model(agent_settings.chat_model),
+        )
+        prompt = _build_opening_prompt(space, memory_context, triggers, instruction)
+
+        run_config = RunConfig(
+            max_turns=settings.coordinator_max_turns,
+            # Tracing exports only reach OpenAI's backend; disable on a pure-
+            # OpenRouter deploy, which may carry no OpenAI key at all.
+            tracing_disabled=bool(settings.openrouter_api_key),
+            model_settings=ModelSettings(
+                max_tokens=settings.max_output_tokens,
+                truncation="auto",
+                # Parity with the chat path. Autonomous runs make unsupervised
+                # judgement calls — they need reasoning effort at least as much
+                # as chat, where it was already set to "medium".
+                reasoning=Reasoning(effort="medium"),
+            ),
+        )
+
+        total_tokens = 0
+        final_summary: str | None = None
+
+        # Per-tool stream emitter — publishes each tool call/result to Redis so
+        # the realtor's activity feed and the broker dashboard see what Chippi
+        # actually did, not just one opaque "I ran a sweep" summary. Fire-and-
+        # forget so the HTTP round-trip never throttles the SDK loop.
+        #
+        # Also captures the tool call into the trajectory accumulator. The two
+        # paths share the same _translate_tool_event payload so the realtor's
+        # live view and the offline trajectory record stay in lockstep.
+        # Tasks are kept in `publish_tasks` and drained in the finally below — a
+        # bare un-referenced create_task can be garbage-collected mid-flight, and
+        # the Modal container can tear down before the last events flush.
+
+        def on_event(event: object) -> None:
+            payload = _translate_tool_event(event)
+            if payload is None:
+                return
+            trajectory_tool_calls.append(normalize_tool_call(payload))
+            publish_tasks.append(
+                asyncio.create_task(
+                    publish_event(
+                        ctx,
+                        "action",
+                        payload["message"],
+                        metadata=payload["metadata"],
+                        agent_type="chippi",
+                    )
+                )
+            )
+
         # Run with automatic fallback through cheaper models on a 429.
         # Streaming mode so on_event fires per tool call / result.
         result = await _run_with_fallback(chippi, prompt, run_config, ctx, on_event=on_event)
@@ -665,7 +670,7 @@ async def _run_locked(
             started_at=started_at,
             status="guardrail_blocked",
             trigger=(triggers[0] if triggers else None),
-            model=chippi.model,
+            model=getattr(chippi, "model", None),
             total_tokens=total_tokens,
             tool_calls=trajectory_tool_calls,
             extra={"pending_drafts": pending},
@@ -701,12 +706,24 @@ async def _run_locked(
             started_at=started_at,
             status="error",
             trigger=(triggers[0] if triggers else None),
-            model=chippi.model,
+            model=getattr(chippi, "model", None),
             total_tokens=total_tokens,
             tool_calls=trajectory_tool_calls,
             extra={"error": str(exc)[:500]},
         )
         return
+
+    except BaseException:
+        # CancelledError (HTTP disconnect / Modal preemption) is BaseException
+        # in 3.8+, not Exception. The trigger is already popped — if we don't
+        # put it back, the event is gone and Chippi never runs it.
+        if triggers:
+            log.warning("agent_run_interrupted_requeue", trigger_count=len(triggers))
+            try:
+                await requeue_triggers(space.id, triggers, increment_attempts=False)
+            except Exception:
+                log.warning("requeue_on_interrupt_failed")
+        raise
     finally:
         # Drain the fire-and-forget publish tasks so the realtor's activity
         # feed gets every tool event before the Modal container exits.
