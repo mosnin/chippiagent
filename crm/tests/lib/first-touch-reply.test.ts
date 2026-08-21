@@ -186,7 +186,7 @@ describe('composeFirstTouchReplySms', () => {
 });
 
 describe('draftFirstTouchReplyForLead', () => {
-  function seedHappyPath(drafts: Row[] = []) {
+  function seedHappyPath(drafts?: Row[]) {
     tables = {
       Contact: {
         single: {
@@ -199,18 +199,18 @@ describe('draftFirstTouchReplyForLead', () => {
         },
       },
       AgentDraft: {
-        rows: drafts.length
-          ? drafts
-          : [
-              {
-                id: 'd_first',
-                content: FIRST_TOUCH_BODY,
-                status: 'pending',
-                channel: 'sms',
-                reasoning: FIRST_TOUCH_REASON,
-                createdAt: '2026-08-21T14:00:00.000Z',
-              },
-            ],
+        rows:
+          drafts ??
+          [
+            {
+              id: 'd_first',
+              content: FIRST_TOUCH_BODY,
+              status: 'pending',
+              channel: 'sms',
+              reasoning: FIRST_TOUCH_REASON,
+              createdAt: '2026-08-21T14:00:00.000Z',
+            },
+          ],
       },
       AIUserProfile: { single: { displayName: 'Jordan Lee', communicationTone: 'direct' } },
       SpaceSetting: {
