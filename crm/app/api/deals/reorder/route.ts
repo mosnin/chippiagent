@@ -2,6 +2,7 @@ import { auth } from '@clerk/nextjs/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { getSpaceForUser } from '@/lib/space';
+import { fireAgentTrigger } from '@/lib/agent/fire-trigger';
 
 export async function PATCH(req: NextRequest) {
   const { userId } = await auth();
@@ -64,6 +65,22 @@ export async function PATCH(req: NextRequest) {
     .eq('id', dealId)
     .single();
   if (fetchError) throw fetchError;
+
+  // Kanban drag, slide-over, and advance-stage all land here — not PATCH
+  // /api/deals/[id]. Wake Chippi on a real stage move so the agent acts
+  // immediately instead of waiting for the cron sweep. Same-column
+  // reorders are position-only and must not fire. Never fail the write.
+  if (deal.stageId !== newStageId) {
+    try {
+      await fireAgentTrigger({
+        spaceId: space.id,
+        event: 'deal_stage_changed',
+        dealId,
+      });
+    } catch (e) {
+      console.error('[deals/reorder] agent trigger failed:', e);
+    }
+  }
 
   return NextResponse.json(updated);
 }
