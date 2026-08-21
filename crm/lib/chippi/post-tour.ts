@@ -371,10 +371,53 @@ function reshapeSdkToolsForOrchestrator(
   return out;
 }
 
+/**
+ * Accept only tools the post-tour execute route is allowed to fire.
+ * Native tools must be on the allowlist. Connected-app slugs are
+ * resolved from the slug itself against the realtor's currently
+ * connected toolkits — the client is not required to echo
+ * `integrationToolkit`. The recorder currently sends `{ tool, args }`
+ * only; requiring the extra field silently dropped approved follow-up
+ * sends (GMAIL_SEND_EMAIL never fired).
+ *
+ * A revoke between propose and execute still drops the slug: inference
+ * is against the live connected set, not a client-supplied badge.
+ */
+export function sanitizeExecuteProposals(
+  raw: unknown,
+  connectedToolkits: ReadonlySet<string>,
+): Array<{ tool: string; args: Record<string, unknown>; integrationToolkit?: string }> {
+  if (!Array.isArray(raw)) return [];
+
+  const nativeAllow = new Set(POST_TOUR_TOOL_ALLOWLIST as readonly string[]);
+  const out: Array<{ tool: string; args: Record<string, unknown>; integrationToolkit?: string }> = [];
+
+  for (const p of raw) {
+    if (!p || typeof p !== 'object') continue;
+    const tool = (p as { tool?: unknown }).tool;
+    const args = (p as { args?: unknown }).args;
+    if (typeof tool !== 'string' || !tool) continue;
+    if (args && typeof args !== 'object') continue;
+    const safeArgs = (args as Record<string, unknown>) ?? {};
+
+    if (nativeAllow.has(tool)) {
+      out.push({ tool, args: safeArgs });
+      continue;
+    }
+
+    const toolkit = inferToolkitFromSlug(tool, connectedToolkits);
+    if (toolkit) {
+      out.push({ tool, args: safeArgs, integrationToolkit: toolkit });
+    }
+  }
+
+  return out;
+}
+
 /** Recover the toolkit slug from a Composio tool name like
  *  `GMAIL_SEND_EMAIL` → `gmail`. Cross-checks against the realtor's
  *  authorized toolkits so a rename or third-party prefix can't slip past. */
-function inferToolkitFromSlug(slug: string, authorized: ReadonlySet<string>): string | null {
+export function inferToolkitFromSlug(slug: string, authorized: ReadonlySet<string>): string | null {
   // Composio's toolkit prefix is the leading underscore-separated chunk,
   // case-insensitive. `googlecalendar` and `googlesheets` are single tokens.
   const lower = slug.toLowerCase();
