@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { getSpaceFromSlug } from '@/lib/space';
 import { sendTourConfirmation, type TourEmailData } from '@/lib/tour-emails';
+import { resolveOrCreateTourContact } from '@/lib/tour-contact';
 import { notifyNewTour } from '@/lib/notify';
 import { sendSMS, tourConfirmationSMS } from '@/lib/sms';
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit';
@@ -88,44 +89,22 @@ export async function POST(req: NextRequest) {
 
   const end = new Date(start.getTime() + duration * 60 * 1000);
 
-  // Try to match to existing contact by email, or create one
-  let contactId: string | null = null;
-  const { data: contactRow } = await supabase
-    .from('Contact')
-    .select('id')
-    .eq('spaceId', space.id)
-    .ilike('email', guestEmail.trim())
-    .maybeSingle();
-
-  if (contactRow) {
-    contactId = contactRow.id;
-    // Set source attribution if not already set
+  // Exact email match (wildcards escaped). Raw ilike('_') attached the
+  // wrong contact; a failed create left contactId null and dropped complete.
+  const contactId = await resolveOrCreateTourContact({
+    spaceId: space.id,
+    name: guestName.trim(),
+    email: guestEmail.trim(),
+    phone: guestPhone,
+    address: propertyAddress,
+  });
+  if (contactId) {
     supabase
       .from('Contact')
       .update({ sourceLabel: 'tour-booking' })
       .eq('id', contactId)
       .is('sourceLabel', null)
       .then(({ error: srcErr }) => { if (srcErr) console.error('[book] Source update failed:', srcErr); });
-  } else {
-    // Auto-create a contact for this tour guest
-    const newContactId = crypto.randomUUID();
-    const { error: createErr } = await supabase.from('Contact').insert({
-      id: newContactId,
-      spaceId: space.id,
-      name: guestName.trim(),
-      email: guestEmail.trim().toLowerCase(),
-      phone: guestPhone?.trim() || null,
-      address: propertyAddress?.trim() || null,
-      type: 'TOUR',
-      tags: ['tour-booking'],
-      sourceLabel: 'tour-booking',
-      scoringStatus: 'unscored',
-    });
-    if (!createErr) {
-      contactId = newContactId;
-    } else {
-      console.error('[book] Auto-create contact failed:', createErr);
-    }
   }
 
   // Generate a cryptographically secure manage token (256-bit entropy)

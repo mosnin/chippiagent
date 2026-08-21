@@ -3,6 +3,8 @@ import { supabase } from '@/lib/supabase';
 import { requireAuth } from '@/lib/api-auth';
 import { getSpaceForUser } from '@/lib/space';
 import { sendTourFollowUp, type TourEmailData } from '@/lib/tour-emails';
+import { resolveOrCreateTourContact } from '@/lib/tour-contact';
+import { findActiveTourConflict, isActiveTourStatus } from '@/lib/tour-slot';
 import { fireAgentTrigger } from '@/lib/agent/fire-trigger';
 
 async function resolveTour(userId: string, tourId: string) {
@@ -92,10 +94,26 @@ export async function PATCH(
     update.endsAt = d.toISOString();
   }
   // Cross-validate the effective start/end range
-  const effectiveStart = update.startsAt ?? ctx.tour.startsAt;
-  const effectiveEnd = update.endsAt ?? ctx.tour.endsAt;
-  if (new Date(effectiveEnd as string) <= new Date(effectiveStart as string)) {
+  const effectiveStart = (update.startsAt ?? ctx.tour.startsAt) as string;
+  const effectiveEnd = (update.endsAt ?? ctx.tour.endsAt) as string;
+  if (new Date(effectiveEnd) <= new Date(effectiveStart)) {
     return NextResponse.json({ error: 'endsAt must be after startsAt' }, { status: 400 });
+  }
+  // Create paths lock via book_tour_atomic. PATCH used to move/reactivate
+  // a tour onto an occupied slot with no check — silent double-book.
+  const nextStatus = (update.status as string | undefined) ?? (ctx.tour.status as string);
+  const timesChanging = update.startsAt !== undefined || update.endsAt !== undefined;
+  const reactivating = isActiveTourStatus(nextStatus) && !isActiveTourStatus(ctx.tour.status);
+  if (isActiveTourStatus(nextStatus) && (timesChanging || reactivating)) {
+    const conflictId = await findActiveTourConflict({
+      spaceId: ctx.space.id,
+      startsAt: effectiveStart,
+      endsAt: effectiveEnd,
+      excludeTourId: id,
+    });
+    if (conflictId) {
+      return NextResponse.json({ error: 'This time slot conflicts with an existing tour' }, { status: 409 });
+    }
   }
   // Validate the new contactId belongs to the SAME space — without this,
   // an owner could link their tour to a contact from another space, and
@@ -119,7 +137,7 @@ export async function PATCH(
     }
   }
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('Tour')
     .update(update)
     .eq('id', id)
@@ -127,24 +145,28 @@ export async function PATCH(
     .single();
   if (error) throw error;
 
-  // Auto-create follow-up reminder when tour is completed (24h later)
-  if (body.status === 'completed' && ctx.tour.status !== 'completed' && data.contactId) {
-    const followUpAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-    supabase
-      .from('Contact')
-      .update({ followUpAt, type: 'TOUR' })
-      .eq('id', data.contactId)
-      .is('followUpAt', null)
-      .then(({ error: fuErr }) => { if (fuErr) console.error('[tour] Follow-up set failed:', fuErr); });
-
-    // Log activity on the contact
-    supabase.from('ContactActivity').insert({
-      id: crypto.randomUUID(),
-      contactId: data.contactId,
+  // Two PATCHes can still race past the pre-check. If another active tour
+  // landed in this window, roll the times back so we don't keep the overlap.
+  if (isActiveTourStatus(data.status) && (timesChanging || reactivating)) {
+    const raced = await findActiveTourConflict({
       spaceId: ctx.space.id,
-      type: 'follow_up',
-      content: `Auto follow-up set for 24h after tour completion${data.propertyAddress ? ` — ${data.propertyAddress}` : ''}`,
-    }).then(({ error: actErr }) => { if (actErr) console.error('[tour] Activity log failed:', actErr); });
+      startsAt: data.startsAt,
+      endsAt: data.endsAt,
+      excludeTourId: id,
+    });
+    if (raced) {
+      const { error: revertErr } = await supabase
+        .from('Tour')
+        .update({
+          startsAt: ctx.tour.startsAt,
+          endsAt: ctx.tour.endsAt,
+          status: ctx.tour.status,
+          updatedAt: new Date().toISOString(),
+        })
+        .eq('id', id);
+      if (revertErr) throw revertErr;
+      return NextResponse.json({ error: 'This time slot conflicts with an existing tour' }, { status: 409 });
+    }
   }
 
   // Auto-set follow-up for no-shows (48h later)
@@ -158,8 +180,61 @@ export async function PATCH(
       .then(({ error: fuErr }) => { if (fuErr) console.error('[tour] No-show follow-up failed:', fuErr); });
   }
 
-  // Send follow-up email when marked completed
   if (body.status === 'completed' && ctx.tour.status !== 'completed') {
+    // fireAgentTrigger skips the follow-up SMS when contactId is missing.
+    // Book used to leave it null on create races; resolve before the event.
+    let completedContactId: string | null = data.contactId ?? null;
+    if (!completedContactId) {
+      completedContactId = await resolveOrCreateTourContact({
+        spaceId: ctx.space.id,
+        name: data.guestName,
+        email: data.guestEmail,
+        phone: data.guestPhone,
+        address: data.propertyAddress,
+      });
+      if (completedContactId) {
+        const { data: linked, error: linkErr } = await supabase
+          .from('Tour')
+          .update({ contactId: completedContactId, updatedAt: new Date().toISOString() })
+          .eq('id', id)
+          .select()
+          .single();
+        if (linkErr) throw linkErr;
+        data = linked;
+      }
+    }
+
+    if (completedContactId) {
+      const followUpAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+      supabase
+        .from('Contact')
+        .update({ followUpAt, type: 'TOUR' })
+        .eq('id', completedContactId)
+        .is('followUpAt', null)
+        .then(({ error: fuErr }) => { if (fuErr) console.error('[tour] Follow-up set failed:', fuErr); });
+
+      supabase.from('ContactActivity').insert({
+        id: crypto.randomUUID(),
+        contactId: completedContactId,
+        spaceId: ctx.space.id,
+        type: 'follow_up',
+        content: `Auto follow-up set for 24h after tour completion${data.propertyAddress ? ` — ${data.propertyAddress}` : ''}`,
+      }).then(({ error: actErr }) => { if (actErr) console.error('[tour] Activity log failed:', actErr); });
+    }
+
+    // Wake Chippi before the confirmation email. A hanging Resend call used
+    // to eat the request and drop tour_completed entirely.
+    try {
+      await fireAgentTrigger({
+        spaceId: ctx.space.id,
+        event: 'tour_completed',
+        contactId: completedContactId ?? undefined,
+        tourId: data.id,
+      });
+    } catch (e) {
+      console.error('[tours/PATCH] agent trigger failed:', e);
+    }
+
     const { data: settings } = await supabase
       .from('SpaceSetting')
       .select('businessName')
@@ -178,22 +253,6 @@ export async function PATCH(
       slug: spaceRow?.slug ?? '',
     };
     try { await sendTourFollowUp(emailData); } catch (e) { console.error('[tours] follow-up email failed:', e); }
-  }
-
-  // Fire the agent trigger on tour completion so Chippi reacts in real
-  // time (drafts a thank-you, asks for feedback, suggests next steps)
-  // instead of waiting for the 4-hour cron sweep. Never fails the response.
-  if (body.status === 'completed' && ctx.tour.status !== 'completed') {
-    try {
-      await fireAgentTrigger({
-        spaceId: ctx.space.id,
-        event: 'tour_completed',
-        contactId: data.contactId ?? undefined,
-        tourId: data.id,
-      });
-    } catch (e) {
-      console.error('[tours/PATCH] agent trigger failed:', e);
-    }
   }
 
   return NextResponse.json(data);
