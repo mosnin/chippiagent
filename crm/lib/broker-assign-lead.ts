@@ -2,6 +2,8 @@ import { supabase } from '@/lib/supabase';
 import { getSpaceByOwnerId } from '@/lib/space';
 import { notifyNewLead } from '@/lib/notify';
 import { fireAgentTrigger } from '@/lib/agent/fire-trigger';
+import { firstNameOf } from '@/lib/agent/first-touch';
+import { sendSMS } from '@/lib/sms';
 
 export type AssignLeadResult =
   | { ok: true; newContactId: string; assignedToSpaceId: string }
@@ -171,17 +173,60 @@ export async function assignLeadToRealtor(params: {
     console.error('[assign-lead] notification failed:', { newContactId, e });
   }
 
-  // The cloned contact is a new inbound lead in the assigned realtor's
-  // workspace — wake first-touch in that realtor's voice.
+  // Fire + send. The cloned contact is a new inbound lead — do not park
+  // a pending draft. new_lead proceeds without a human queue.
   try {
-    await fireAgentTrigger({
+    const trigger = await fireAgentTrigger({
       spaceId: realtorSpace.id,
       event: 'new_lead',
       contactId: newContactId,
     });
+    await sendNewLeadSmsNow({
+      spaceId: realtorSpace.id,
+      contactId: newContactId,
+      phone: contact.phone,
+      contactName: contact.name,
+      alreadySent: trigger.firstTouch?.sent === true,
+      body: trigger.firstTouch?.content,
+    });
   } catch (e) {
-    console.error('[assign-lead] agent trigger failed:', { newContactId, e });
+    console.error('[assign-lead] agent trigger/send failed:', { newContactId, e });
   }
 
   return { ok: true, newContactId, assignedToSpaceId: realtorSpace.id };
+}
+
+async function sendNewLeadSmsNow(input: {
+  spaceId: string;
+  contactId: string;
+  phone?: string | null;
+  contactName?: string | null;
+  alreadySent?: boolean;
+  body?: string | null;
+}): Promise<void> {
+  if (input.alreadySent) return;
+  const phone = input.phone?.trim();
+  if (!phone) return;
+
+  let body = input.body?.trim() ?? '';
+  if (!body) {
+    const lead = firstNameOf(input.contactName, 'there');
+    body = `Hey ${lead}, want to pick a time to look this week?`;
+  }
+  if (/\bchippy\b/i.test(body)) return;
+
+  const sent = await sendSMS({ to: phone, body });
+  if (!sent) return;
+
+  const { error } = await supabase.from('ContactActivity').insert({
+    id: crypto.randomUUID(),
+    contactId: input.contactId,
+    spaceId: input.spaceId,
+    type: 'note',
+    content: `SMS: ${body.slice(0, 140)}${body.length > 140 ? '…' : ''}`,
+    metadata: { channel: 'sms', via: 'trigger_send', event: 'new_lead' },
+  });
+  if (error) {
+    console.error('[assign-lead] send activity insert failed', error);
+  }
 }

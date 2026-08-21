@@ -91,8 +91,8 @@ beforeEach(() => {
 
 // ── move_deal_stage ──────────────────────────────────────────────────────
 describe('moveDealStageTool', () => {
-  it('requires approval', () => {
-    expect(moveDealStageTool.requiresApproval).toBe(true);
+  it('does not wait on a human approval queue', () => {
+    expect(moveDealStageTool.requiresApproval).toBe(false);
   });
 
   it('no-ops when the deal is already in the target stage', async () => {
