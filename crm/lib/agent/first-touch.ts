@@ -261,6 +261,9 @@ export function assertValidFirstTouchText(
   if (!content.trim()) {
     throw new Error('first-touch draft is empty');
   }
+  if (/\b(sent|delivered|auto-?sent)\b/i.test(content)) {
+    throw new Error('first-touch draft claims it was sent');
+  }
   for (const window of opts.windows) {
     if (!content.includes(window)) {
       throw new Error(`first-touch draft missing showing window: ${window}`);
@@ -271,9 +274,6 @@ export function assertValidFirstTouchText(
   }
   if (/\bchippy\b/i.test(content)) {
     throw new Error('first-touch draft used the wrong brand spelling');
-  }
-  if (/\b(sent|delivered|auto-?sent)\b/i.test(content)) {
-    throw new Error('first-touch draft claims it was sent');
   }
   const toneMarks: Record<AgentTone, RegExp> = {
     warm: /this is|which works/i,

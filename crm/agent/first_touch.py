@@ -160,6 +160,9 @@ def assert_valid_first_touch_text(
 ) -> None:
     if not content.strip():
         raise ValueError("first-touch draft is empty")
+    lower = content.lower()
+    if any(word in lower for word in ("sent", "delivered", "auto-sent", "autosent")):
+        raise ValueError("first-touch draft claims it was sent")
     for window in windows:
         if window not in content:
             raise ValueError(f"first-touch draft missing showing window: {window}")
@@ -167,9 +170,6 @@ def assert_valid_first_touch_text(
         raise ValueError("first-touch draft is not in the assigned agent voice")
     if "chippy" in content.lower():
         raise ValueError("first-touch draft used the wrong brand spelling")
-    lower = content.lower()
-    if any(word in lower for word in ("sent", "delivered", "auto-sent", "autosent")):
-        raise ValueError("first-touch draft claims it was sent")
     marks = _TONE_MARKS[normalize_tone(tone)]
     if not any(mark in lower for mark in marks):
         raise ValueError(f"first-touch draft is not in the {tone} voice")
