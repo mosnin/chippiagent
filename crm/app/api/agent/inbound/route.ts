@@ -50,14 +50,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid channel' }, { status: 400 });
   }
 
-  // Validate contact belongs to the stated space
-  const { data: contact } = await supabase
+  // Validate contact belongs to the stated space. A lookup error is not
+  // "not found" — returning 404 here would stop webhook retries and drop
+  // the inbound_message trigger (and the first-touch reply SMS) on a
+  // transient DB blip.
+  const { data: contact, error: contactErr } = await supabase
     .from('Contact')
     .select('id, name, leadScore')
     .eq('id', contactId)
     .eq('spaceId', spaceId)
     .maybeSingle();
 
+  if (contactErr) {
+    console.error('[agent/inbound] contact lookup error', contactErr);
+    return NextResponse.json({ error: 'Contact lookup failed' }, { status: 500 });
+  }
   if (!contact) {
     return NextResponse.json({ error: 'Contact not found' }, { status: 404 });
   }
