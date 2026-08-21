@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { requireSpaceOwner } from '@/lib/api-auth';
 import { encrypt, decrypt } from '@/lib/crypto';
+import { encodeCalendarId, gcalEventGone, tourFreesGcalSlot } from '@/lib/calendar/gcal-sync';
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ?? '';
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET ?? '';
@@ -115,6 +116,27 @@ export async function POST(req: NextRequest) {
     const { data: tour } = await supabase.from('Tour').select('*').eq('id', tourId).maybeSingle();
     if (!tour) return NextResponse.json({ error: 'Tour not found' }, { status: 404 });
 
+    const calendarId = tokenRow.calendarId || 'primary';
+    const calPath = encodeCalendarId(calendarId);
+
+    // Cancelled / no-show tours must come off Google Calendar. Leaving the
+    // event in place keeps freeBusy marking the slot busy — a missed slot.
+    if (tourFreesGcalSlot(tour.status)) {
+      if (tour.googleEventId) {
+        const del = await fetch(
+          `https://www.googleapis.com/calendar/v3/calendars/${calPath}/events/${encodeURIComponent(tour.googleEventId)}`,
+          { method: 'DELETE', headers: { Authorization: `Bearer ${accessToken}` } },
+        );
+        if (!del.ok && !gcalEventGone(del.status)) {
+          const text = await del.text();
+          console.error('[gcal] Delete event failed:', del.status, text);
+          return NextResponse.json({ error: 'Failed to remove calendar event' }, { status: 500 });
+        }
+        await supabase.from('Tour').update({ googleEventId: null }).eq('id', tourId);
+      }
+      return NextResponse.json({ synced: true, googleEventId: null, removed: true });
+    }
+
     const event = {
       summary: `Tour: ${tour.guestName}`,
       description: [
@@ -128,29 +150,34 @@ export async function POST(req: NextRequest) {
       end: { dateTime: tour.endsAt, timeZone: 'UTC' },
     };
 
-    const calendarId = tokenRow.calendarId || 'primary';
-
-    // Update existing event or create new
-    let googleEventId = tour.googleEventId;
+    let googleEventId = tour.googleEventId as string | null;
     if (googleEventId) {
       const res = await fetch(
-        `https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events/${googleEventId}`,
+        `https://www.googleapis.com/calendar/v3/calendars/${calPath}/events/${encodeURIComponent(googleEventId)}`,
         {
           method: 'PUT',
           headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
           body: JSON.stringify(event),
         }
       );
-      if (!res.ok) {
-        // Clear the stale event ID in the DB so it gets re-created on retry
-        await supabase.from('Tour').update({ googleEventId: null }).eq('id', tourId);
-        googleEventId = null; // Re-create below
+      if (res.ok) {
+        await supabase.from('Tour').update({ googleEventId }).eq('id', tourId);
+        return NextResponse.json({ synced: true, googleEventId });
       }
+      // Recreate only when Google says the event is gone. A 5xx/403 PUT
+      // followed by POST duplicated the event and left the old one blocking
+      // the slot after a move or cancel.
+      if (!gcalEventGone(res.status)) {
+        const text = await res.text();
+        console.error('[gcal] Update event failed:', res.status, text);
+        return NextResponse.json({ error: 'Failed to update calendar event' }, { status: 500 });
+      }
+      googleEventId = null;
     }
 
     if (!googleEventId) {
       const res = await fetch(
-        `https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events`,
+        `https://www.googleapis.com/calendar/v3/calendars/${calPath}/events`,
         {
           method: 'POST',
           headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },

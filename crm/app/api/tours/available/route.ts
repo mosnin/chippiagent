@@ -3,6 +3,16 @@ import { supabase } from '@/lib/supabase';
 import { getSpaceFromSlug } from '@/lib/space';
 import { decrypt } from '@/lib/crypto';
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit';
+import {
+  applyBufferToBusy,
+  calendarEventsToBusy,
+  parseFreeBusy,
+  subtractMatchingIntervals,
+  tourOverlapWindow,
+  toursToBusy,
+  type BusyInterval,
+} from '@/lib/calendar/tour-busy';
+import { buildAvailabilitySlots, expandOverrides } from '@/lib/calendar/availability-slots';
 
 /** Public endpoint — returns available time slots for the next 14 days. */
 export async function GET(req: NextRequest) {
@@ -38,7 +48,6 @@ export async function GET(req: NextRequest) {
   const timezone = settings?.timezone ?? 'America/New_York';
   const blockedDates: string[] = settings?.tourBlockedDates ?? [];
 
-  let propertyProfile: any = null;
   if (propertyId) {
     const { data: profile } = await supabase
       .from('TourPropertyProfile')
@@ -48,7 +57,6 @@ export async function GET(req: NextRequest) {
       .eq('isActive', true)
       .maybeSingle();
     if (profile) {
-      propertyProfile = profile;
       duration = profile.tourDuration;
       startHour = profile.startHour;
       endHour = profile.endHour;
@@ -64,158 +72,88 @@ export async function GET(req: NextRequest) {
   const endDate = new Date(startDate);
   endDate.setDate(endDate.getDate() + 14);
 
-  // Fetch existing tours in range (filter by property if specified)
-  let toursQuery = supabase
+  // Interval overlap, space-wide. The realtor is one person — a tour at
+  // property A occupies the same body as a tour at property B.
+  // `book_tour_atomic` already checks space-wide; this query must match
+  // or the booking page offers slots that 409 (or double-book via other paths).
+  const overlap = tourOverlapWindow(startDate, endDate, bufferMinutes);
+  const { data: existingTours } = await supabase
     .from('Tour')
     .select('startsAt, endsAt')
     .eq('spaceId', space.id)
     .in('status', ['scheduled', 'confirmed'])
-    .gte('startsAt', startDate.toISOString())
-    .lte('startsAt', endDate.toISOString());
-  if (propertyId) {
-    toursQuery = toursQuery.eq('propertyProfileId', propertyId);
+    .lt('startsAt', overlap.to)
+    .gt('endsAt', overlap.from);
+
+  const bookedSlots = toursToBusy(existingTours ?? [], bufferMinutes);
+
+  const fromDate = overlap.from.slice(0, 10);
+  const toDate = overlap.to.slice(0, 10);
+  const { data: calendarEvents } = await supabase
+    .from('CalendarEvent')
+    .select('date, time')
+    .eq('spaceId', space.id)
+    .gte('date', fromDate)
+    .lte('date', toDate);
+  const calendarBusy = calendarEventsToBusy(calendarEvents ?? [], bufferMinutes);
+
+  // Fetch Google Calendar busy times if connected. Fail closed: a connected
+  // calendar we cannot read would otherwise advertise every GCal meeting
+  // as free, and book_tour_atomic does not re-check GCal.
+  const gcalWindowStart = new Date(startDate.getTime() - Math.max(0, bufferMinutes) * 60_000);
+  const gcalResult = await fetchGoogleCalendarBusy(space.id, gcalWindowStart, endDate);
+  if (gcalResult.state === 'unavailable') {
+    return NextResponse.json(
+      { error: 'Calendar unavailable', slots: [] },
+      { status: 503 },
+    );
   }
-  const { data: existingTours } = await toursQuery;
 
-  const bookedSlots = (existingTours ?? []).map((t: any) => ({
-    start: new Date(t.startsAt).getTime() - bufferMinutes * 60_000,
-    end: new Date(t.endsAt).getTime() + bufferMinutes * 60_000,
-  }));
+  let gcalBusySlots: BusyInterval[] =
+    gcalResult.state === 'ok' ? applyBufferToBusy(gcalResult.busy, bufferMinutes) : [];
 
-  // Fetch Google Calendar busy times if connected
-  const gcalBusySlots = await fetchGoogleCalendarBusy(space.id, startDate, endDate);
-  const allBusySlots = [...bookedSlots, ...gcalBusySlots];
+  if (gcalBusySlots.length > 0) {
+    const { data: leftoverTours } = await supabase
+      .from('Tour')
+      .select('startsAt, endsAt')
+      .eq('spaceId', space.id)
+      .in('status', ['cancelled', 'no_show'])
+      .not('googleEventId', 'is', null)
+      .lt('startsAt', overlap.to)
+      .gt('endsAt', overlap.from);
+    // Leftover GCal events keep the exact tour times. Subtract those
+    // intervals so a cancelled showing does not hide the slot.
+    const leftovers = toursToBusy(leftoverTours ?? [], 0);
+    gcalBusySlots = subtractMatchingIntervals(gcalBusySlots, leftovers);
+  }
 
-  const blockedSet = new Set(blockedDates);
+  const allBusySlots = [...bookedSlots, ...calendarBusy, ...gcalBusySlots];
 
-  // Fetch overrides (single-date and recurring) scoped to this property or global
   let overridesQuery = supabase
     .from('TourAvailabilityOverride')
     .select('date, isBlocked, startHour, endHour, recurrence, endDate, propertyProfileId')
     .eq('spaceId', space.id);
   const { data: overridesRaw } = await overridesQuery;
 
-  // Build effective overrides for each date in range, expanding recurring ones
-  const overrideMap = new Map<string, { isBlocked: boolean; startHour: number | null; endHour: number | null }>();
+  const overrideMap = expandOverrides(
+    overridesRaw ?? [],
+    startDate,
+    endDate,
+    propertyId,
+  );
 
-  for (const o of overridesRaw ?? []) {
-    // Filter by property: use override if it's global (null) or matches the requested property
-    if (propertyId && o.propertyProfileId && o.propertyProfileId !== propertyId) continue;
-    if (!propertyId && o.propertyProfileId) continue;
-
-    if (o.recurrence === 'none') {
-      overrideMap.set(o.date, { isBlocked: o.isBlocked, startHour: o.startHour, endHour: o.endHour });
-    } else {
-      // Expand recurring override into individual dates within our 14-day window
-      const oStart = new Date(o.date + 'T12:00:00');
-      const oEnd = o.endDate ? new Date(o.endDate + 'T12:00:00') : endDate;
-      const cur = new Date(oStart);
-
-      while (cur <= oEnd && cur <= endDate) {
-        if (cur >= startDate) {
-          const key = cur.toISOString().split('T')[0];
-          // Don't overwrite a more specific single-date override
-          if (!overrideMap.has(key)) {
-            overrideMap.set(key, { isBlocked: o.isBlocked, startHour: o.startHour, endHour: o.endHour });
-          }
-        }
-        // Advance cursor based on recurrence type
-        if (o.recurrence === 'weekly') {
-          cur.setDate(cur.getDate() + 7);
-        } else if (o.recurrence === 'biweekly') {
-          cur.setDate(cur.getDate() + 14);
-        } else if (o.recurrence === 'monthly') {
-          cur.setMonth(cur.getMonth() + 1);
-        }
-      }
-    }
-  }
-
-  // Generate slots day by day using TIMEZONE-AWARE date math.
-  // Hours (startHour/endHour) are in the space's configured timezone,
-  // not UTC. We calculate the UTC offset for each day to generate
-  // correct ISO timestamps that render properly in any timezone.
-  function getTimezoneOffsetMs(date: Date, tz: string): number {
-    // Get the UTC time string for this date in the target timezone
-    const utcStr = date.toLocaleString('en-US', { timeZone: 'UTC' });
-    const tzStr = date.toLocaleString('en-US', { timeZone: tz });
-    const utcDate = new Date(utcStr);
-    const tzDate = new Date(tzStr);
-    return tzDate.getTime() - utcDate.getTime();
-  }
-
-  const slots: { date: string; times: string[] }[] = [];
-  const cursor = new Date(startDate);
-  cursor.setHours(12, 0, 0, 0); // Use noon to avoid DST edge cases
-
-  for (let day = 0; day < 14; day++) {
-    // Calculate this day's date in the space's timezone
-    const tzOffset = getTimezoneOffsetMs(cursor, timezone);
-    const localDate = new Date(cursor.getTime() + tzOffset);
-    const dayOfWeek = localDate.getDay();
-    const dateKey = `${localDate.getFullYear()}-${String(localDate.getMonth() + 1).padStart(2, '0')}-${String(localDate.getDate()).padStart(2, '0')}`;
-
-    const override = overrideMap.get(dateKey);
-
-    let dayAvailable = false;
-    let dayStart = startHour;
-    let dayEnd = endHour;
-
-    if (override) {
-      if (override.isBlocked) {
-        dayAvailable = false;
-      } else if (override.startHour != null && override.endHour != null) {
-        dayAvailable = true;
-        dayStart = override.startHour;
-        dayEnd = override.endHour;
-      }
-    } else {
-      dayAvailable = daysAvailable.includes(dayOfWeek) && !blockedSet.has(dateKey);
-    }
-
-    if (dayAvailable) {
-      const daySlots: string[] = [];
-      // End window in ms: dayEnd hours past midnight local
-      const dayEndMs = new Date(
-        localDate.getFullYear(),
-        localDate.getMonth(),
-        localDate.getDate(),
-        dayEnd % 24, dayEnd >= 24 ? 0 : 0, 0, 0
-      ).getTime() + (dayEnd >= 24 ? 24 * 60 * 60_000 : 0);
-
-      for (let hour = dayStart; hour < dayEnd; hour++) {
-        for (let min = 0; min < 60; min += duration) {
-          // Create the slot time in the space's local timezone, then convert to UTC
-          // by subtracting the timezone offset
-          const localSlotMs = new Date(
-            localDate.getFullYear(),
-            localDate.getMonth(),
-            localDate.getDate(),
-            hour, min, 0, 0
-          ).getTime();
-          // Ensure the slot END fits within the available window
-          if (localSlotMs + duration * 60_000 > dayEndMs) continue;
-
-          const utcSlotMs = localSlotMs - tzOffset;
-          const slotStart = new Date(utcSlotMs);
-          const slotEnd = new Date(utcSlotMs + duration * 60_000);
-
-          if (slotStart.getTime() < now.getTime()) continue;
-
-          const hasConflict = allBusySlots.some(
-            (b) => slotStart.getTime() < b.end && slotEnd.getTime() > b.start
-          );
-          if (!hasConflict) {
-            daySlots.push(slotStart.toISOString());
-          }
-        }
-      }
-      if (daySlots.length > 0) {
-        slots.push({ date: dateKey, times: daySlots });
-      }
-    }
-    cursor.setDate(cursor.getDate() + 1);
-  }
+  const slots = buildAvailabilitySlots({
+    now,
+    startDate,
+    timezone,
+    duration,
+    startHour,
+    endHour,
+    daysAvailable,
+    blockedDates,
+    overrideMap,
+    busy: allBusySlots,
+  });
 
   // Also fetch all active property profiles for this space (so the booking page can show them)
   const { data: profiles } = await supabase
@@ -236,18 +174,23 @@ export async function GET(req: NextRequest) {
 
 // ── Google Calendar helpers ──────────────────────────────────────────────────
 
+type GcalBusyResult =
+  | { state: 'skipped' }
+  | { state: 'ok'; busy: BusyInterval[] }
+  | { state: 'unavailable' };
+
 async function fetchGoogleCalendarBusy(
   spaceId: string,
   timeMin: Date,
-  timeMax: Date
-): Promise<Array<{ start: number; end: number }>> {
+  timeMax: Date,
+): Promise<GcalBusyResult> {
   const { data: tokenRow } = await supabase
     .from('GoogleCalendarToken')
     .select('*')
     .eq('spaceId', spaceId)
     .maybeSingle();
 
-  if (!tokenRow) return [];
+  if (!tokenRow) return { state: 'skipped' };
 
   try {
     const accessToken = await getValidGCalToken(tokenRow, spaceId);
@@ -268,19 +211,20 @@ async function fetchGoogleCalendarBusy(
 
     if (!res.ok) {
       console.error('[availability] GCal freeBusy failed:', res.status);
-      return [];
+      return { state: 'unavailable' };
     }
 
     const data = await res.json();
-    const busyPeriods = data.calendars?.[calendarId]?.busy ?? [];
+    const parsed = parseFreeBusy(data, calendarId);
+    if (!parsed.ok) {
+      console.error('[availability] GCal freeBusy returned no usable busy data');
+      return { state: 'unavailable' };
+    }
 
-    return busyPeriods.map((b: { start: string; end: string }) => ({
-      start: new Date(b.start).getTime(),
-      end: new Date(b.end).getTime(),
-    }));
+    return { state: 'ok', busy: parsed.busy };
   } catch (err) {
     console.error('[availability] GCal busy check error:', err);
-    return [];
+    return { state: 'unavailable' };
   }
 }
 
