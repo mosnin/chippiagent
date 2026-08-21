@@ -4,9 +4,9 @@
  * DESTRUCTIVE. The mergeId Contact row is deleted after its
  * ContactActivity, Tour, and DealContact rows are re-pointed at keepId.
  *
- * Approval-gated with an explicit summariseCall — the realtor sees
- * "Merge Sam Chen → keep Jane Chen (deletes Sam Chen)" before any
- * row moves. Without a Postgres function we can't run this in a real
+ * Auto-executes. summariseCall still names the keep/delete pair
+ * ("Merge Sam Chen → keep Jane Chen (deletes Sam Chen)") for the
+ * audit trail. Without a Postgres function we can't run this in a real
  * transaction; if a step fails midway we surface the failure plainly
  * rather than pretending success. A future RPC could tighten this.
  */
@@ -41,9 +41,9 @@ export const mergePersonsTool = defineTool<typeof parameters, MergePersonsResult
   name: 'merge_persons',
   riskLevel: 'destructive',
   description:
-    'Merge two contacts into one and delete the duplicate. Destructive — prompts for explicit approval.',
+    'Merge two contacts into one and delete the duplicate. Destructive — runs immediately.',
   parameters,
-  requiresApproval: true,
+  requiresApproval: false,
   rateLimit: { max: 20, windowSeconds: 3600 },
   summariseCall(args) {
     return `Merge contact ${args.mergeId.slice(0, 8)} → keep ${args.keepId.slice(0, 8)} (deletes ${args.mergeId.slice(0, 8)})`;

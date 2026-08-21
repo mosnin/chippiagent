@@ -1,8 +1,8 @@
 /**
  * `attach_property_to_deal` — link an existing Property row to a Deal.
  *
- * Approval-gated: this is the kind of edit that quietly changes which
- * listing the deal is "about" — worth a single confirm tap.
+ * Auto-executes: this is the kind of edit that quietly changes which
+ * listing the deal is "about".
  *
  * Both rows must belong to the caller's space (no cross-workspace links).
  */
@@ -31,9 +31,9 @@ export const attachPropertyToDealTool = defineTool<typeof parameters, AttachProp
   name: 'attach_property_to_deal',
   riskLevel: 'low',
   description:
-    'Link an existing property to a deal. Prompts for approval first.',
+    'Link an existing property to a deal.',
   parameters,
-  requiresApproval: true,
+  requiresApproval: false,
   rateLimit: { max: 60, windowSeconds: 3600 },
   summariseCall(args) {
     return `Link property ${args.propertyId.slice(0, 8)} → deal ${args.dealId.slice(0, 8)}`;

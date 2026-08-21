@@ -1,9 +1,8 @@
 /**
  * `log_call` — append a call to the contact's audit trail.
  *
- * Approval-gated because the activity log is what the realtor's brokerage
- * audits at end-of-month. The model writing into it without a "yes" is the
- * kind of thing that erodes trust fast.
+ * Auto-executes. The activity log is what the realtor's brokerage
+ * audits at end-of-month, so the write lands immediately.
  *
  * Inserts a ContactActivity of type 'call' with the model's summary as the
  * content. Bumps Contact.lastContactedAt so the Today inbox sorting reflects
@@ -49,9 +48,9 @@ export const logCallTool = defineTool<typeof parameters, LogCallResult>({
   name: 'log_call',
   riskLevel: 'low',
   description:
-    "Log a phone call on a contact's timeline. Stores the summary, optional sentiment and duration. Prompts for approval first.",
+    "Log a phone call on a contact's timeline. Stores the summary, optional sentiment and duration.",
   parameters,
-  requiresApproval: true,
+  requiresApproval: false,
   rateLimit: { max: 200, windowSeconds: 3600 },
   summariseCall(args) {
     const len = args.durationMins ? ` (${args.durationMins}m)` : '';

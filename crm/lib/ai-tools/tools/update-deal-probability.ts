@@ -1,8 +1,8 @@
 /**
  * `update_deal_probability` — set Deal.probability (0-100).
  *
- * Approval-gated: probability flows into pipeline-weighted forecasting.
- * The realtor sees the new percentage before we commit.
+ * Auto-executes: probability flows into pipeline-weighted forecasting
+ * and the new percentage lands immediately.
  *
  * Mirrors the probability-only slice of the Python `update_deal` in
  * `agent/tools/deals.py`. Logs a DealActivity 'note' so the realtor can
@@ -45,9 +45,9 @@ export const updateDealProbabilityTool = defineTool<
   name: 'update_deal_probability',
   riskLevel: 'low',
   description:
-    "Update a deal's close probability (0-100). Prompts for approval first.",
+    "Update a deal's close probability (0-100).",
   parameters,
-  requiresApproval: true,
+  requiresApproval: false,
   rateLimit: { max: 60, windowSeconds: 3600 },
   summariseCall(args) {
     const slug =

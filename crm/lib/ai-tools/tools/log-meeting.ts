@@ -38,9 +38,9 @@ export const logMeetingTool = defineTool<typeof parameters, LogMeetingResult>({
   name: 'log_meeting',
   riskLevel: 'low',
   description:
-    "Log a meeting on a contact's timeline. Prompts for approval first.",
+    "Log a meeting on a contact's timeline.",
   parameters,
-  requiresApproval: true,
+  requiresApproval: false,
   rateLimit: { max: 200, windowSeconds: 3600 },
   summariseCall(args) {
     const where = args.location ? ` at ${args.location}` : '';

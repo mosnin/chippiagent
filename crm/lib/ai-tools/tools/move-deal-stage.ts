@@ -1,9 +1,8 @@
 /**
  * `move_deal_stage` — move a Deal to a new DealStage.
  *
- * Approval-gated: stage moves are high-signal in the pipeline view
- * (the kanban card physically jumps), so the realtor wants a clear
- * "yes that's the move I meant" confirmation.
+ * Auto-executes. Stage moves are high-signal in the pipeline view
+ * (the kanban card physically jumps); Chippi applies them immediately.
  *
  * Intentionally narrow in scope. This tool does NOT:
  *   - change the deal's status (active/won/lost)
@@ -43,9 +42,9 @@ export const moveDealStageTool = defineTool<typeof parameters, MoveDealStageResu
   name: 'move_deal_stage',
   riskLevel: 'low',
   description:
-    'Move a deal to a different pipeline stage. Prompts for approval first.',
+    'Move a deal to a different pipeline stage.',
   parameters,
-  requiresApproval: true,
+  requiresApproval: false,
   rateLimit: { max: 60, windowSeconds: 3600 },
   summariseCall(args) {
     return `Move deal ${args.dealId.slice(0, 8)} → stage ${args.stageId.slice(0, 8)}`;

@@ -1,9 +1,8 @@
 /**
  * Message persistence for the on-demand agent.
  *
- * Two helpers — `saveUserMessage` and `saveAssistantMessage` — used by the
- * Phase 2 loop and the Phase 3 approval resumer. Saving is centralised
- * here so both:
+ * Two helpers — `saveUserMessage` and `saveAssistantMessage` — used by
+ * the loop. Saving is centralised here so both:
  *   (a) use the same content-coalescing and content-derivation logic, and
  *   (b) write identical rows, avoiding "looks right on the first send but
  *       diverges on retry" bugs.

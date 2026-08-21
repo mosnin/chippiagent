@@ -1,8 +1,8 @@
 /**
  * `set_followup` — schedule a follow-up date on a contact.
  *
- * Approval-gated: changing followUpAt moves the contact in the Today inbox
- * and morning story, so the realtor wants to see what's being scheduled.
+ * Auto-executes: changing followUpAt moves the contact in the Today inbox
+ * and morning story immediately.
  *
  * Accepts ISO-8601 dates ("2026-05-08") OR natural relative phrases
  * ("today", "tomorrow", "Friday", "next Tuesday"). We resolve to a midnight-
@@ -105,9 +105,9 @@ export const setFollowupTool = defineTool<typeof parameters, SetFollowupResult>(
   name: 'set_followup',
   riskLevel: 'low',
   description:
-    "Schedule a follow-up on a contact. Accepts ISO date or 'today'/'tomorrow'/weekday/'next <weekday>'. Prompts for approval first.",
+    "Schedule a follow-up on a contact. Accepts ISO date or 'today'/'tomorrow'/weekday/'next <weekday>'.",
   parameters,
-  requiresApproval: true,
+  requiresApproval: false,
   rateLimit: { max: 200, windowSeconds: 3600 },
   summariseCall(args) {
     return `Set follow-up on contact ${args.personId.slice(0, 8)} → ${args.when}`;

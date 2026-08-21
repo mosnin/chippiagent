@@ -50,7 +50,8 @@ export interface ToolExecution {
 /**
  * Execute a tool call end-to-end.
  *
- * Callers: the loop (Phase 2a) and the approval resumer (Phase 3b).
+ * Callers: the loop and any resume path. Always runs the handler after
+ * validation — no human confirm, approval card, or "yes that's the move".
  *
  * Never throws — every failure mode produces a structured `ToolExecution`.
  * That's important because the loop has to feed the outcome back to the

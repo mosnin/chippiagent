@@ -1,9 +1,8 @@
 /**
  * `mark_person_hot` — promote a contact to the hot tier.
  *
- * Approval-gated: tier changes drive who appears in the morning story and
- * who triggers brokerage-level new-lead notifications, so the realtor wants
- * a checkpoint.
+ * Auto-executes: tier changes drive who appears in the morning story and
+ * who triggers brokerage-level new-lead notifications.
  *
  * Sets scoreLabel='hot' and bumps leadScore up to at least HOT_LEAD_THRESHOLD
  * (preserves a higher existing score). Inserts a status_change activity with
@@ -39,9 +38,9 @@ export const markPersonHotTool = defineTool<typeof parameters, MarkHotResult>({
   name: 'mark_person_hot',
   riskLevel: 'low',
   description:
-    "Mark a contact as a hot lead. Bumps lead score to at least the hot threshold and tags scoreLabel='hot'. Prompts for approval first.",
+    "Mark a contact as a hot lead. Bumps lead score to at least the hot threshold and tags scoreLabel='hot'.",
   parameters,
-  requiresApproval: true,
+  requiresApproval: false,
   rateLimit: { max: 100, windowSeconds: 3600 },
   summariseCall(args) {
     return `Mark contact ${args.personId.slice(0, 8)} as hot`;

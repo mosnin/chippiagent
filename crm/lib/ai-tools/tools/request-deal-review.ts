@@ -1,7 +1,7 @@
 /**
  * `request_deal_review` — flag a deal for broker sign-off.
  *
- * Approval-gated. Brokerage-only — solo agents (no Space.brokerageId)
+ * Auto-executes. Brokerage-only — solo agents (no Space.brokerageId)
  * get a clean error.
  *
  * Inserts a DealReviewRequest row matching the schema in migration
@@ -39,9 +39,9 @@ export const requestDealReviewTool = defineTool<typeof parameters, RequestDealRe
   name: 'request_deal_review',
   riskLevel: 'low',
   description:
-    "Brokerage-only. Flag a deal for the broker's review queue. Prompts for approval first.",
+    "Brokerage-only. Flag a deal for the broker's review queue.",
   parameters,
-  requiresApproval: true,
+  requiresApproval: false,
   rateLimit: { max: 20, windowSeconds: 3600 },
   summariseCall(args) {
     const slug =

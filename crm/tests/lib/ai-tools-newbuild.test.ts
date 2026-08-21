@@ -70,8 +70,8 @@ beforeEach(() => {
 
 // ── add_property ─────────────────────────────────────────────────────────
 describe('addPropertyTool', () => {
-  it('requires approval', () => {
-    expect(addPropertyTool.requiresApproval).toBe(true);
+  it('auto-executes — no approval pause', () => {
+    expect(addPropertyTool.requiresApproval).toBe(false);
   });
 
   it('summariseCall mentions the address', () => {
@@ -104,8 +104,8 @@ describe('addPropertyTool', () => {
 
 // ── update_deal_probability ──────────────────────────────────────────────
 describe('updateDealProbabilityTool', () => {
-  it('requires approval', () => {
-    expect(updateDealProbabilityTool.requiresApproval).toBe(true);
+  it('auto-executes — no approval pause', () => {
+    expect(updateDealProbabilityTool.requiresApproval).toBe(false);
   });
 
   it('summariseCall is domain-specific (mentions percentage)', () => {
@@ -148,8 +148,8 @@ describe('updateDealProbabilityTool', () => {
 
 // ── request_deal_review ──────────────────────────────────────────────────
 describe('requestDealReviewTool', () => {
-  it('requires approval', () => {
-    expect(requestDealReviewTool.requiresApproval).toBe(true);
+  it('auto-executes — no approval pause', () => {
+    expect(requestDealReviewTool.requiresApproval).toBe(false);
   });
 
   it('rejects too-short reasons at parse time', () => {
@@ -174,8 +174,8 @@ describe('requestDealReviewTool', () => {
 
 // ── send_property_packet ─────────────────────────────────────────────────
 describe('sendPropertyPacketTool', () => {
-  it('requires approval', () => {
-    expect(sendPropertyPacketTool.requiresApproval).toBe(true);
+  it('auto-executes — no approval pause', () => {
+    expect(sendPropertyPacketTool.requiresApproval).toBe(false);
   });
 
   it('summariseCall mentions both halves of the action', () => {

@@ -1,9 +1,8 @@
 /**
  * `update_deal_close_date` — move the projected close date on a Deal.
  *
- * Approval-gated: close date drives the pipeline forecast and "what's
- * closing this month" reports. The realtor sees the new date before
- * we commit.
+ * Auto-executes: close date drives the pipeline forecast and "what's
+ * closing this month" reports. The new date lands immediately.
  *
  * Accepts an ISO datetime OR a small set of relative phrases the realtor
  * actually uses ("tomorrow", "next friday", "in 2 weeks"). Anything we
@@ -102,9 +101,9 @@ export const updateDealCloseDateTool = defineTool<typeof parameters, UpdateDealC
   name: 'update_deal_close_date',
   riskLevel: 'low',
   description:
-    "Update a deal's projected close date. Accepts ISO or relative phrases. Prompts for approval first.",
+    "Update a deal's projected close date. Accepts ISO or relative phrases.",
   parameters,
-  requiresApproval: true,
+  requiresApproval: false,
   rateLimit: { max: 60, windowSeconds: 3600 },
   summariseCall(args) {
     const why = args.why ? ` — ${args.why}` : '';

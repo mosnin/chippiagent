@@ -94,8 +94,8 @@ beforeEach(() => {
 
 // ── update_deal_value ────────────────────────────────────────────────────
 describe('updateDealValueTool', () => {
-  it('requires approval', () => {
-    expect(updateDealValueTool.requiresApproval).toBe(true);
+  it('auto-executes — no approval pause', () => {
+    expect(updateDealValueTool.requiresApproval).toBe(false);
   });
 
   it('updates the value, logs activity, reindexes', async () => {
@@ -126,8 +126,8 @@ describe('updateDealValueTool', () => {
 
 // ── update_deal_close_date ───────────────────────────────────────────────
 describe('updateDealCloseDateTool', () => {
-  it('requires approval', () => {
-    expect(updateDealCloseDateTool.requiresApproval).toBe(true);
+  it('auto-executes — no approval pause', () => {
+    expect(updateDealCloseDateTool.requiresApproval).toBe(false);
   });
 
   it('resolves "tomorrow" to a valid ISO string', () => {
@@ -165,8 +165,8 @@ describe('updateDealCloseDateTool', () => {
 
 // ── attach_property_to_deal ──────────────────────────────────────────────
 describe('attachPropertyToDealTool', () => {
-  it('requires approval', () => {
-    expect(attachPropertyToDealTool.requiresApproval).toBe(true);
+  it('auto-executes — no approval pause', () => {
+    expect(attachPropertyToDealTool.requiresApproval).toBe(false);
   });
 
   it('errors when the property is in a different space (not found)', async () => {
@@ -185,8 +185,8 @@ describe('attachPropertyToDealTool', () => {
 
 // ── reschedule_tour ──────────────────────────────────────────────────────
 describe('rescheduleTourTool', () => {
-  it('requires approval', () => {
-    expect(rescheduleTourTool.requiresApproval).toBe(true);
+  it('auto-executes — no approval pause', () => {
+    expect(rescheduleTourTool.requiresApproval).toBe(false);
   });
 
   it('errors when tour is missing', async () => {
@@ -228,8 +228,8 @@ describe('rescheduleTourTool', () => {
 
 // ── cancel_tour ──────────────────────────────────────────────────────────
 describe('cancelTourTool', () => {
-  it('requires approval', () => {
-    expect(cancelTourTool.requiresApproval).toBe(true);
+  it('auto-executes — no approval pause', () => {
+    expect(cancelTourTool.requiresApproval).toBe(false);
   });
 
   it('errors when the tour is missing', async () => {
@@ -310,8 +310,8 @@ describe('findToursTool', () => {
 
 // ── update_property_status ───────────────────────────────────────────────
 describe('updatePropertyStatusTool', () => {
-  it('requires approval', () => {
-    expect(updatePropertyStatusTool.requiresApproval).toBe(true);
+  it('auto-executes — no approval pause', () => {
+    expect(updatePropertyStatusTool.requiresApproval).toBe(false);
   });
 
   it('rejects an unknown status at parse time', () => {
@@ -336,8 +336,8 @@ describe('updatePropertyStatusTool', () => {
 
 // ── note_on_property ─────────────────────────────────────────────────────
 describe('noteOnPropertyTool', () => {
-  it('requires approval', () => {
-    expect(noteOnPropertyTool.requiresApproval).toBe(true);
+  it('auto-executes — no approval pause', () => {
+    expect(noteOnPropertyTool.requiresApproval).toBe(false);
   });
 
   it('errors when property is missing', async () => {
@@ -402,8 +402,8 @@ describe('findPropertyTool', () => {
 
 // ── merge_persons ────────────────────────────────────────────────────────
 describe('mergePersonsTool', () => {
-  it('requires approval', () => {
-    expect(mergePersonsTool.requiresApproval).toBe(true);
+  it('auto-executes — no approval pause', () => {
+    expect(mergePersonsTool.requiresApproval).toBe(false);
   });
 
   it('rejects keepId === mergeId at parse time', () => {

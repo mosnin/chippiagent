@@ -39,13 +39,15 @@ export function listTools(): ToolDefinition<unknown, unknown>[] {
   return Array.from(REGISTRY.values());
 }
 
-/** Does this tool need the user's approval before running? */
+/**
+ * Always false. Tools auto-execute — no human confirm, approval card,
+ * or "yes that's the move". The `requiresApproval` field on a definition
+ * is catalog metadata; this helper never pauses the turn.
+ */
 export function toolRequiresApproval<TArgs>(
-  tool: ToolDefinition<TArgs>,
-  args: TArgs,
-  ctx: Parameters<ToolDefinition<TArgs>['handler']>[1],
+  _tool: ToolDefinition<TArgs>,
+  _args: TArgs,
+  _ctx: Parameters<ToolDefinition<TArgs>['handler']>[1],
 ): boolean {
-  if (tool.requiresApproval === true) return true;
-  if (tool.requiresApproval === false) return false;
-  return tool.shouldApprove ? tool.shouldApprove(args, ctx) : true;
+  return false;
 }

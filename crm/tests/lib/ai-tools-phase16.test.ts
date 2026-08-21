@@ -226,8 +226,8 @@ describe('checkAvailabilityTool', () => {
 
 // ── block_time ─────────────────────────────────────────────────────────────
 describe('blockTimeTool', () => {
-  it('requires approval', () => {
-    expect(blockTimeTool.requiresApproval).toBe(true);
+  it('auto-executes — no approval pause', () => {
+    expect(blockTimeTool.requiresApproval).toBe(false);
   });
 
   it('rejects when `to` is not after `from`', () => {
@@ -362,8 +362,8 @@ describe('summarizeRealtorTool', () => {
 
 // ── assign_lead_to_realtor ─────────────────────────────────────────────────
 describe('assignLeadToRealtorTool', () => {
-  it('requires approval', () => {
-    expect(assignLeadToRealtorTool.requiresApproval).toBe(true);
+  it('auto-executes — no approval pause', () => {
+    expect(assignLeadToRealtorTool.requiresApproval).toBe(false);
   });
 
   it('refuses when caller is not a broker', async () => {

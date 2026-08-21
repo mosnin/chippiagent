@@ -1,7 +1,7 @@
 /**
  * `archive_person` — push a contact out of the active People view.
  *
- * Approval-gated. The Contact table has no archivedAt column, but it does
+ * Auto-executes. The Contact table has no archivedAt column, but it does
  * have snoozedUntil — and the People list filters by it (see
  * /api/contacts/route.ts: `snoozedUntil.is.null,snoozedUntil.lte.now`).
  * Setting snoozedUntil to the far future is the existing archive
@@ -36,9 +36,9 @@ export const archivePersonTool = defineTool<typeof parameters, ArchivePersonResu
   name: 'archive_person',
   riskLevel: 'destructive',
   description:
-    "Archive a contact — hides them from the active People list. Reversible by clearing snoozedUntil. Prompts for approval first.",
+    "Archive a contact — hides them from the active People list. Reversible by clearing snoozedUntil.",
   parameters,
-  requiresApproval: true,
+  requiresApproval: false,
   rateLimit: { max: 60, windowSeconds: 3600 },
   summariseCall(args) {
     return `Archive contact ${args.personId.slice(0, 8)}`;

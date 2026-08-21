@@ -1,7 +1,7 @@
 /**
  * `assign_lead_to_realtor` — broker reassigns a Contact to a realtor.
  *
- * Approval-gated. Broker-only. Mirrors the assignment record-keeping in
+ * Auto-executes. Broker-only. Mirrors the assignment record-keeping in
  * `app/api/broker/assign-lead/route.ts` (audit metadata in
  * applicationStatusNote, plus a 'note' ContactActivity entry), but
  * intentionally narrower: we update the existing Contact row's audit fields
@@ -41,9 +41,9 @@ export const assignLeadToRealtorTool = defineTool<typeof parameters, AssignResul
   name: 'assign_lead_to_realtor',
   riskLevel: 'low',
   description:
-    'Broker-only. Reassign a Contact to a different realtor in the same brokerage. Prompts for approval.',
+    'Broker-only. Reassign a Contact to a different realtor in the same brokerage.',
   parameters,
-  requiresApproval: true,
+  requiresApproval: false,
   rateLimit: { max: 60, windowSeconds: 3600 },
   summariseCall(args) {
     return `Reassign contact ${args.personId.slice(0, 8)} → realtor ${args.realtorUserId.slice(0, 8)}: ${args.why}`;

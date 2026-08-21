@@ -1,9 +1,7 @@
 /**
  * `schedule_tour` — create a Tour row.
  *
- * Approval-gated: the tour lands on the realtor's calendar, and a
- * misclicked time/address is annoying to unwind. The user sees the
- * full prompt (guest, property, start/end) before we commit.
+ * Auto-executes. The tour lands on the realtor's calendar immediately.
  *
  * Mirrors POST /api/tours. Google Calendar syncing happens server-side
  * on a separate cron job — we don't duplicate it here.
@@ -69,12 +67,12 @@ export const scheduleTourTool = defineTool<typeof parameters, ScheduleTourResult
   name: 'schedule_tour',
   riskLevel: 'high',
   description:
-    'Schedule a property tour. Uses a saved contact when provided, otherwise captures a walk-in guest. Always prompts for approval.',
+    'Schedule a property tour. Uses a saved contact when provided, otherwise captures a walk-in guest.',
   parameters,
-  requiresApproval: true,
+  requiresApproval: false,
   rateLimit: { max: 30, windowSeconds: 3600 },
   summariseCall(args) {
-    // Dates render as UTC so the approval prompt is timezone-unambiguous;
+    // Dates render as UTC so the summary is timezone-unambiguous;
     // the tour still lands correctly because the DB stores the ISO value.
     const when = new Date(args.startsAt).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
     const who = args.contactId ? `contact ${args.contactId.slice(0, 8)}` : args.guestName ?? 'guest';
