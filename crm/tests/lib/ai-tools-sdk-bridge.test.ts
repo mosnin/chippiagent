@@ -386,7 +386,7 @@ describe('toSdkTool — strict-mode schema rewriting', () => {
     expect(required.sort()).toEqual(['limit', 'query']);
   });
 
-  it('handler still receives null for fields the model passes as null (handlers use ?? defaults — null and undefined both fall through)', async () => {
+  it('handler runs when the model passes null for an optional field (null coerced to undefined; ?? defaults still apply)', async () => {
     const handler = vi.fn(async () => ({ summary: 'ok' }));
     const def = defineTool({
       name: 'noop',
@@ -399,8 +399,11 @@ describe('toSdkTool — strict-mode schema rewriting', () => {
     });
 
     const sdk = toSdkTool(def, makeCtx());
-    await sdk.invoke(new RunContext(), JSON.stringify({ query: null }));
-    expect(handler).toHaveBeenCalledWith({ query: null }, expect.anything());
+    const out = await sdk.invoke(new RunContext(), JSON.stringify({ query: null }));
+    expect(out).toBe('ok');
+    expect(handler).toHaveBeenCalledTimes(1);
+    const args = handler.mock.calls[0][0] as { query?: string };
+    expect(args.query ?? 'fallback').toBe('fallback');
   });
 
   it('handler receives string when the model provides one', async () => {

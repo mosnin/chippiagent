@@ -108,6 +108,25 @@ export async function executeTool(
   return runValidatedTool(tool, rawArgs, ctx, name);
 }
 
+/**
+ * Strict-mode JSON schema requires every property. The SDK therefore
+ * sends `null` for unused optional fields. Original zod `.optional()`
+ * rejects `null`, so we coerce `null` → `undefined` before parse.
+ * Non-null values still hit `.email()` / `.min()` / etc.
+ */
+function nullsToUndefined(value: unknown): unknown {
+  if (value === null) return undefined;
+  if (Array.isArray(value)) return value.map(nullsToUndefined);
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      out[key] = nullsToUndefined(child);
+    }
+    return out;
+  }
+  return value;
+}
+
 async function runValidatedTool(
   tool: ToolDefinition<unknown, unknown>,
   rawArgs: unknown,
@@ -116,7 +135,7 @@ async function runValidatedTool(
 ): Promise<ToolExecution> {
   // 3. Validate args. Prefer structured zod issues so the model can
   //    self-correct precisely ("expected number, got string at .limit").
-  const parsed = tool.parameters.safeParse(rawArgs);
+  const parsed = tool.parameters.safeParse(nullsToUndefined(rawArgs));
   if (!parsed.success) {
     const issueSummary = parsed.error.issues
       .slice(0, 6)
