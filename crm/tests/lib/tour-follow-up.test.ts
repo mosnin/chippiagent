@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const sendSMS = vi.fn();
+const { sendSMS } = vi.hoisted(() => ({ sendSMS: vi.fn() }));
 
 vi.mock('@/lib/sms', () => ({ sendSMS }));
 vi.mock('@/lib/logger', () => ({
