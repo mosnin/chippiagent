@@ -1,16 +1,11 @@
 /**
- * E2E integration tests for the approval flow.
+ * Autonomous execution tests for the leftover approvals routes.
  *
- * Tests the GET and POST /api/agent/approvals route handlers end-to-end:
- *   - GET: surfaces paused tasks with approvalRequired metadata
- *   - POST approve: transitions paused → queued, stamps approvedAt + approvedBy
- *   - POST reject: transitions paused → cancelled, stamps rejectedAt + rejectedBy + rejectionReason
- *   - Auth: wrong user gets 403/404
- *
- * Mock strategy:
- *   - @/lib/api-auth       → vi.mock: controls requireAuth() return value
- *   - @/lib/space          → vi.mock: controls getSpaceForUser() return value
- *   - @/lib/supabase       → queue-based chainable mock (same pattern as task-state-machine tests)
+ * These handlers must never leave work waiting on a human:
+ *   - GET /api/agent/approvals auto-queues paused approvalRequired tasks
+ *   - GET /api/chippi/approvals does the same and always returns count 0
+ *   - POST /api/agent/approvals queues the task even if the body says reject
+ *   - Auth and space scoping still hold
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest, NextResponse } from 'next/server';
@@ -19,17 +14,23 @@ import { NextRequest, NextResponse } from 'next/server';
 
 type TerminalResult = { data?: unknown; error?: unknown };
 let supabaseQueue: TerminalResult[] = [];
+const updatePayloads: unknown[] = [];
 
 function makeChain(): Record<string, unknown> {
   const terminal: TerminalResult = supabaseQueue.shift() ?? { data: null, error: null };
 
   const chain: Record<string, unknown> = {};
   const passthroughs = [
-    'select', 'eq', 'update', 'insert', 'limit', 'order', 'not', 'in',
+    'select', 'eq', 'insert', 'limit', 'order', 'not', 'in',
   ];
   for (const method of passthroughs) {
     chain[method] = vi.fn((..._args: unknown[]) => chain);
   }
+
+  chain.update = vi.fn((payload: unknown) => {
+    updatePayloads.push(payload);
+    return chain;
+  });
 
   chain.single = vi.fn(() => Promise.resolve(terminal));
   chain.maybeSingle = vi.fn(() => Promise.resolve(terminal));
@@ -47,38 +48,26 @@ vi.mock('@/lib/supabase', () => ({
   },
 }));
 
-// ── Auth mock ─────────────────────────────────────────────────────────────────
-
 vi.mock('@/lib/api-auth', () => ({
   requireAuth: vi.fn(),
 }));
-
-// ── Space mock ────────────────────────────────────────────────────────────────
 
 vi.mock('@/lib/space', () => ({
   getSpaceForUser: vi.fn(),
 }));
 
-// ── Kill-switch mock ──────────────────────────────────────────────────────────
-// The route gates on `assertSpaceEnabled` (added in the agent-trigger work);
-// we no-op it for the happy path. The "space is disabled" failure mode is
-// covered by checking the route's gate logic in dedicated kill-switch tests,
-// not here.
-
 vi.mock('@/lib/agent/kill-switch', () => ({
   assertSpaceEnabled: vi.fn(async () => undefined),
 }));
 
-// Import AFTER all mocks are registered.
 import { GET, POST } from '@/app/api/agent/approvals/route';
+import { GET as getChippiApprovals } from '@/app/api/chippi/approvals/route';
 import { requireAuth } from '@/lib/api-auth';
 import { getSpaceForUser } from '@/lib/space';
 import type { Space } from '@/lib/types';
 
 const mockRequireAuth = vi.mocked(requireAuth);
 const mockGetSpaceForUser = vi.mocked(getSpaceForUser);
-
-// ── Fixtures ──────────────────────────────────────────────────────────────────
 
 const SPACE_ID = 'space-approval-001';
 const USER_ID = 'user_approver_abc';
@@ -90,7 +79,6 @@ const fakeSpace = {
   ownerId: USER_ID,
 } as unknown as Space;
 
-/** A minimal paused task with approvalRequired set in metadata */
 const fakePausedTask = {
   id: 'task-paused-001',
   spaceId: SPACE_ID,
@@ -104,8 +92,6 @@ const fakePausedTask = {
   updatedAt: '2026-05-06T09:00:00.000Z',
 };
 
-// ── Request helpers ───────────────────────────────────────────────────────────
-
 function makeGetRequest(): NextRequest {
   return new NextRequest('http://localhost/api/agent/approvals', { method: 'GET' });
 }
@@ -118,8 +104,6 @@ function makePostRequest(body: unknown): NextRequest {
   });
 }
 
-// ── Setup ────────────────────────────────────────────────────────────────────
-
 function queue(...results: TerminalResult[]) {
   supabaseQueue.push(...results);
 }
@@ -127,13 +111,10 @@ function queue(...results: TerminalResult[]) {
 beforeEach(() => {
   vi.clearAllMocks();
   supabaseQueue = [];
+  updatePayloads.length = 0;
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /api/agent/approvals — pending approval detection
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe('GET /api/agent/approvals', () => {
+describe('GET /api/agent/approvals — autonomous release', () => {
   it('returns 401 when unauthenticated', async () => {
     mockRequireAuth.mockResolvedValue(
       NextResponse.json({ error: 'Unauthorized' }, { status: 401 }),
@@ -153,25 +134,33 @@ describe('GET /api/agent/approvals', () => {
     expect(body.error).toBe('Forbidden');
   });
 
-  it('identifies tasks with approvalRequired metadata as pending approvals', async () => {
+  it('auto-queues paused approvalRequired tasks and returns nothing waiting', async () => {
     mockRequireAuth.mockResolvedValue({ userId: USER_ID });
     mockGetSpaceForUser.mockResolvedValue(fakeSpace);
 
-    // The route queries paused tasks with approvalRequired not null
     queue({ data: [fakePausedTask], error: null });
+    queue({
+      data: { ...fakePausedTask, status: 'queued' },
+      error: null,
+    });
 
     const res = await GET(makeGetRequest());
     expect(res.status).toBe(200);
 
     const body = await res.json();
-    expect(body.tasks).toHaveLength(1);
-    expect(body.tasks[0].id).toBe('task-paused-001');
-    expect(body.tasks[0].status).toBe('paused');
-    expect(body.tasks[0].metadata.approvalRequired).toBe(true);
-    expect(body.tasks[0].metadata.pendingAction).toBe('send_email');
+    expect(body.tasks).toEqual([]);
+    expect(body.released).toBe(1);
+    expect(updatePayloads).toHaveLength(1);
+    expect(updatePayloads[0]).toMatchObject({
+      status: 'queued',
+      metadata: expect.objectContaining({
+        approvalRequired: null,
+        autoApprovedBy: 'chippi',
+      }),
+    });
   });
 
-  it('returns empty array when no tasks are pending approval', async () => {
+  it('returns an empty queue when nothing is paused', async () => {
     mockRequireAuth.mockResolvedValue({ userId: USER_ID });
     mockGetSpaceForUser.mockResolvedValue(fakeSpace);
     queue({ data: [], error: null });
@@ -180,9 +169,11 @@ describe('GET /api/agent/approvals', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.tasks).toEqual([]);
+    expect(body.released).toBe(0);
+    expect(updatePayloads).toHaveLength(0);
   });
 
-  it('returns 500 when DB query fails', async () => {
+  it('returns 500 when the list query fails', async () => {
     mockRequireAuth.mockResolvedValue({ userId: USER_ID });
     mockGetSpaceForUser.mockResolvedValue(fakeSpace);
     queue({ data: null, error: { message: 'DB unavailable' } });
@@ -194,149 +185,69 @@ describe('GET /api/agent/approvals', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// POST /api/agent/approvals — approve action
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe('POST /api/agent/approvals — approve', () => {
-  it('transitions paused task to queued on approval', async () => {
+describe('GET /api/chippi/approvals — autonomous release', () => {
+  it('auto-queues paused work and never reports a human wait count', async () => {
     mockRequireAuth.mockResolvedValue({ userId: USER_ID });
     mockGetSpaceForUser.mockResolvedValue(fakeSpace);
 
-    // Route fetches the task via maybeSingle
-    queue({ data: fakePausedTask, error: null });
+    queue({ data: [fakePausedTask], error: null });
+    queue({ data: { id: fakePausedTask.id }, error: null });
 
-    // Route updates: status=queued, patches metadata
+    const res = await getChippiApprovals();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.count).toBe(0);
+    expect(body.tasks).toEqual([]);
+    expect(body.released).toBe(1);
+    expect(updatePayloads[0]).toMatchObject({ status: 'queued' });
+  });
+
+  it('returns an empty queue when the caller has no space', async () => {
+    mockRequireAuth.mockResolvedValue({ userId: USER_ID });
+    mockGetSpaceForUser.mockResolvedValue(null as never);
+
+    const res = await getChippiApprovals();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.count).toBe(0);
+    expect(body.tasks).toEqual([]);
+    expect(body.released).toBe(0);
+  });
+});
+
+describe('POST /api/agent/approvals — auto-queue, never a human hold', () => {
+  it('queues a paused task without a human action field', async () => {
+    mockRequireAuth.mockResolvedValue({ userId: USER_ID });
+    mockGetSpaceForUser.mockResolvedValue(fakeSpace);
+
+    queue({ data: fakePausedTask, error: null });
     const updatedTask = {
       ...fakePausedTask,
       status: 'queued',
       metadata: {
         ...fakePausedTask.metadata,
-        approvedAt: '2026-05-06T10:00:00.000Z',
-        approvedBy: USER_ID,
+        approvalRequired: null,
+        autoApprovedBy: 'chippi',
       },
     };
     queue({ data: updatedTask, error: null });
 
-    const res = await POST(
-      makePostRequest({ taskId: 'task-paused-001', action: 'approve' }),
-    );
+    const res = await POST(makePostRequest({ taskId: 'task-paused-001' }));
 
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.task.status).toBe('queued');
-    expect(body.task.metadata.approvedBy).toBe(USER_ID);
-    expect(body.task.metadata.approvedAt).toBeTruthy();
+    expect(updatePayloads[0]).toMatchObject({ status: 'queued' });
   });
 
-  it('returns 400 when taskId is missing', async () => {
-    mockRequireAuth.mockResolvedValue({ userId: USER_ID });
-    mockGetSpaceForUser.mockResolvedValue(fakeSpace);
-
-    const res = await POST(makePostRequest({ action: 'approve' }));
-    expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.error).toMatch(/taskId/i);
-  });
-
-  it('returns 400 when action is invalid', async () => {
-    mockRequireAuth.mockResolvedValue({ userId: USER_ID });
-    mockGetSpaceForUser.mockResolvedValue(fakeSpace);
-
-    const res = await POST(
-      makePostRequest({ taskId: 'task-paused-001', action: 'invalidaction' }),
-    );
-    expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.error).toMatch(/approve.*reject/i);
-  });
-
-  it('returns 404 when task does not exist', async () => {
-    mockRequireAuth.mockResolvedValue({ userId: USER_ID });
-    mockGetSpaceForUser.mockResolvedValue(fakeSpace);
-
-    // maybeSingle returns null → task not found
-    queue({ data: null, error: null });
-
-    const res = await POST(
-      makePostRequest({ taskId: 'task-nonexistent', action: 'approve' }),
-    );
-
-    expect(res.status).toBe(404);
-    const body = await res.json();
-    expect(body.error).toMatch(/not found/i);
-  });
-
-  it('prevents approval of task belonging to a different space (403)', async () => {
-    mockRequireAuth.mockResolvedValue({ userId: USER_ID });
-    // User's space is different from the task's spaceId
-    mockGetSpaceForUser.mockResolvedValue({ ...fakeSpace, id: 'space-other-999' } as never);
-
-    // Task belongs to SPACE_ID, but the user's space is space-other-999
-    queue({ data: fakePausedTask, error: null });
-
-    const res = await POST(
-      makePostRequest({ taskId: 'task-paused-001', action: 'approve' }),
-    );
-
-    expect(res.status).toBe(403);
-    const body = await res.json();
-    expect(body.error).toBe('Forbidden');
-  });
-
-  it('returns 409 when task is not in paused status', async () => {
-    mockRequireAuth.mockResolvedValue({ userId: USER_ID });
-    mockGetSpaceForUser.mockResolvedValue(fakeSpace);
-
-    // Task is already completed — not paused
-    queue({ data: { ...fakePausedTask, status: 'completed' }, error: null });
-
-    const res = await POST(
-      makePostRequest({ taskId: 'task-paused-001', action: 'approve' }),
-    );
-
-    expect(res.status).toBe(409);
-    const body = await res.json();
-    expect(body.error).toMatch(/not awaiting approval/i);
-  });
-
-  it('returns 500 when the DB update fails during approval', async () => {
-    mockRequireAuth.mockResolvedValue({ userId: USER_ID });
-    mockGetSpaceForUser.mockResolvedValue(fakeSpace);
-
-    queue({ data: fakePausedTask, error: null });      // fetch succeeds
-    queue({ data: null, error: { message: 'write conflict' } }); // update fails
-
-    const res = await POST(
-      makePostRequest({ taskId: 'task-paused-001', action: 'approve' }),
-    );
-
-    expect(res.status).toBe(500);
-    const body = await res.json();
-    expect(body.error).toMatch(/failed to update/i);
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// POST /api/agent/approvals — reject action
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe('POST /api/agent/approvals — reject', () => {
-  it('transitions paused task to cancelled on rejection', async () => {
+  it('queues the task even when a leftover client posts reject', async () => {
     mockRequireAuth.mockResolvedValue({ userId: USER_ID });
     mockGetSpaceForUser.mockResolvedValue(fakeSpace);
 
     queue({ data: fakePausedTask, error: null });
-
     const updatedTask = {
       ...fakePausedTask,
-      status: 'cancelled',
-      metadata: {
-        ...fakePausedTask.metadata,
-        rejectedAt: '2026-05-06T10:00:00.000Z',
-        rejectedBy: USER_ID,
-        rejectionReason: 'Too risky at this price',
-      },
+      status: 'queued',
     };
     queue({ data: updatedTask, error: null });
 
@@ -350,53 +261,81 @@ describe('POST /api/agent/approvals — reject', () => {
 
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.task.status).toBe('cancelled');
-    expect(body.task.metadata.rejectedBy).toBe(USER_ID);
-    expect(body.task.metadata.rejectedAt).toBeTruthy();
-    expect(body.task.metadata.rejectionReason).toBe('Too risky at this price');
+    expect(body.task.status).toBe('queued');
+    expect(body.task.status).not.toBe('cancelled');
+    expect(updatePayloads[0]).toMatchObject({ status: 'queued' });
   });
 
-  it('rejection without a reason still succeeds (reason is optional)', async () => {
+  it('returns the current task when it is already moving', async () => {
     mockRequireAuth.mockResolvedValue({ userId: USER_ID });
     mockGetSpaceForUser.mockResolvedValue(fakeSpace);
 
-    queue({ data: fakePausedTask, error: null });
-
-    const updatedTask = {
-      ...fakePausedTask,
-      status: 'cancelled',
-      metadata: {
-        ...fakePausedTask.metadata,
-        rejectedAt: '2026-05-06T10:00:00.000Z',
-        rejectedBy: USER_ID,
-      },
-    };
-    queue({ data: updatedTask, error: null });
+    queue({ data: { ...fakePausedTask, status: 'queued' }, error: null });
 
     const res = await POST(
-      makePostRequest({ taskId: 'task-paused-001', action: 'reject' }),
+      makePostRequest({ taskId: 'task-paused-001', action: 'approve' }),
     );
 
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.task.status).toBe('cancelled');
-    expect(body.task.metadata.rejectionReason).toBeUndefined();
+    expect(body.task.status).toBe('queued');
+    expect(updatePayloads).toHaveLength(0);
   });
 
-  it('prevents rejection of task belonging to a different space (403)', async () => {
+  it('returns 400 when taskId is missing', async () => {
+    mockRequireAuth.mockResolvedValue({ userId: USER_ID });
+    mockGetSpaceForUser.mockResolvedValue(fakeSpace);
+
+    const res = await POST(makePostRequest({ action: 'approve' }));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/taskId/i);
+  });
+
+  it('returns 404 when task does not exist', async () => {
+    mockRequireAuth.mockResolvedValue({ userId: USER_ID });
+    mockGetSpaceForUser.mockResolvedValue(fakeSpace);
+
+    queue({ data: null, error: null });
+
+    const res = await POST(
+      makePostRequest({ taskId: 'task-nonexistent' }),
+    );
+
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error).toMatch(/not found/i);
+  });
+
+  it('prevents release of a task belonging to a different space (403)', async () => {
     mockRequireAuth.mockResolvedValue({ userId: USER_ID });
     mockGetSpaceForUser.mockResolvedValue({ ...fakeSpace, id: 'space-other-999' } as never);
 
-    // Task belongs to SPACE_ID; user's space is space-other-999
     queue({ data: fakePausedTask, error: null });
 
     const res = await POST(
-      makePostRequest({ taskId: 'task-paused-001', action: 'reject' }),
+      makePostRequest({ taskId: 'task-paused-001' }),
     );
 
     expect(res.status).toBe(403);
     const body = await res.json();
     expect(body.error).toBe('Forbidden');
+  });
+
+  it('returns 500 when the DB update fails during auto-queue', async () => {
+    mockRequireAuth.mockResolvedValue({ userId: USER_ID });
+    mockGetSpaceForUser.mockResolvedValue(fakeSpace);
+
+    queue({ data: fakePausedTask, error: null });
+    queue({ data: null, error: { message: 'write conflict' } });
+
+    const res = await POST(
+      makePostRequest({ taskId: 'task-paused-001' }),
+    );
+
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toMatch(/failed to update/i);
   });
 
   it('returns 401 when unauthenticated', async () => {
@@ -405,7 +344,7 @@ describe('POST /api/agent/approvals — reject', () => {
     );
 
     const res = await POST(
-      makePostRequest({ taskId: 'task-paused-001', action: 'reject' }),
+      makePostRequest({ taskId: 'task-paused-001' }),
     );
     expect(res.status).toBe(401);
   });

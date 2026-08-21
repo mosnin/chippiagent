@@ -1,14 +1,7 @@
 /**
- * The approval celebration is a one-line moment in three places (morning
- * sheet, drafts inbox, chat permission prompt). These tests pin the visible
- * sentences (the taste decision) and the tool-name → kind mapping (the
- * routing decision) so a future "let's tweak the wording" PR has to walk
- * through every kind on purpose.
- *
- * No render tests — the project doesn't ship jsdom / testing-library and
- * we're not adding deps for one component. The component itself is dumb:
- * it picks a sentence, sets a 2.5s timer, calls onDone. The timer + visual
- * are verified by the moment landing right in product.
+ * Completion lines after Chippi already acted. These are not an approval
+ * gate and do not wait on a human tap. Tests pin the spoken sentence and
+ * the tool-name → kind map so consumers keep a stable autonomous voice.
  */
 import { describe, it, expect } from 'vitest';
 import {
@@ -19,7 +12,7 @@ import {
   type ApprovalKind,
 } from '@/components/chippi/approval-celebration';
 
-describe('getApprovalSentence', () => {
+describe('getApprovalSentence — autonomous completion, not a human wait', () => {
   it('renders the email line', () => {
     expect(getApprovalSentence('email')).toBe("Sent. I'll watch for a reply.");
   });
@@ -73,8 +66,6 @@ describe('getApprovalSentence', () => {
   });
 
   it('trims whitespace-only subjects so we do not render an awkward sentence', () => {
-    // A bad caller passing '   ' shouldn't produce an awkward sentence with
-    // a stray space wedged in. The component falls back to the no-name form.
     expect(getApprovalSentence('person-hot', '   ')).toBe("Got it. They're hot now.");
     expect(getApprovalSentence('person-cold', '   ')).toBe("Got it. They're cold now.");
   });
@@ -101,7 +92,7 @@ describe('approvalKindForTool', () => {
     expect(approvalKindForTool(tool)).toBe(kind);
   });
 
-  it('returns null for non-celebrate-able tools (find / lookup / draft / cancel)', () => {
+  it('returns null for tools that do not speak a completion line', () => {
     expect(approvalKindForTool('find_person')).toBeNull();
     expect(approvalKindForTool('draft_email')).toBeNull();
     expect(approvalKindForTool('draft_sms')).toBeNull();
@@ -121,7 +112,6 @@ describe('approvalSubjectFromArgs', () => {
   });
 
   it('returns undefined for tools with no extractable subject', () => {
-    // mark_person_hot only carries personId — no name available client-side.
     expect(
       approvalSubjectFromArgs('mark_person_hot', { personId: 'abc-123', why: 'asked twice' }),
     ).toBeUndefined();
@@ -130,7 +120,7 @@ describe('approvalSubjectFromArgs', () => {
 });
 
 describe('APPROVAL_DWELL_MS', () => {
-  it('is 2.5s — long enough to read four-to-seven words, short enough not to overstay', () => {
+  it('is a display dwell after work already ran — not a human approval wait', () => {
     expect(APPROVAL_DWELL_MS).toBe(2500);
   });
 });

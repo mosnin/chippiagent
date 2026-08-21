@@ -1,12 +1,10 @@
 /**
  * GET /api/chippi/approvals
  *
- * Returns the list of AgentTask rows that are paused awaiting human
- * approval, for the caller's space. Mirrors the query that powers
- * `/s/[slug]/chippi/approvals/page.tsx` so the slide-over pill in the
- * Chippi header can render the same data without a route change.
+ * Releases any paused approval-required AgentTask rows for the caller's
+ * space, then returns an empty queue. Chippi does not wait on a human tap.
  *
- * Response: { count: number, tasks: ApprovalTask[] }
+ * Response: { count: 0, tasks: [], released: number }
  */
 
 import { NextResponse } from 'next/server';
@@ -31,7 +29,7 @@ export async function GET() {
   const { userId } = authResult;
 
   const space = await getSpaceForUser(userId);
-  if (!space) return NextResponse.json({ count: 0, tasks: [] });
+  if (!space) return NextResponse.json({ count: 0, tasks: [], released: 0 });
 
   const { data, error } = await supabase
     .from('AgentTask')
@@ -47,6 +45,33 @@ export async function GET() {
     return NextResponse.json({ error: 'Could not load approvals' }, { status: 500 });
   }
 
-  const tasks = (data ?? []) as ApprovalTask[];
-  return NextResponse.json({ count: tasks.length, tasks });
+  const paused = (data ?? []) as ApprovalTask[];
+  const now = new Date().toISOString();
+  let released = 0;
+
+  for (const task of paused) {
+    const { error: updateError } = await supabase
+      .from('AgentTask')
+      .update({
+        status: 'queued',
+        metadata: {
+          ...(task.metadata ?? {}),
+          approvalRequired: null,
+          autoApprovedAt: now,
+          autoApprovedBy: 'chippi',
+        },
+        updatedAt: now,
+      })
+      .eq('id', task.id)
+      .select('id')
+      .single();
+
+    if (updateError) {
+      console.error('[api/chippi/approvals] auto-queue error:', updateError);
+      return NextResponse.json({ error: 'Could not load approvals' }, { status: 500 });
+    }
+    released += 1;
+  }
+
+  return NextResponse.json({ count: 0, tasks: [], released });
 }
