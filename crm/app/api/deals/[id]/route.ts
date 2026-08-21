@@ -209,6 +209,29 @@ export async function PATCH(
       }
     }
 
+    // propertyId: null unlinks. A non-null id must be a Property in THIS
+    // space. Deal.propertyId's FK is only ON Property(id) — it does not
+    // constrain space — so a foreign workspace's listing id would write
+    // through and pin this deal to another tenant's listing.
+    let propertyIdVal: string | null | undefined = undefined;
+    if (body.propertyId !== undefined) {
+      if (!body.propertyId) {
+        propertyIdVal = null;
+      } else {
+        const propertyId = String(body.propertyId).slice(0, 64);
+        const { data: propertyCheck } = await supabase
+          .from('Property')
+          .select('id')
+          .eq('id', propertyId)
+          .eq('spaceId', space.id)
+          .maybeSingle();
+        if (!propertyCheck) {
+          return NextResponse.json({ error: 'Invalid property' }, { status: 400 });
+        }
+        propertyIdVal = propertyCheck.id;
+      }
+    }
+
     // Validate title/description lengths and priority enum
     if (body.title !== undefined && (typeof body.title !== 'string' || body.title.length > 255)) {
       return NextResponse.json({ error: 'Title must be under 255 chars' }, { status: 400 });
@@ -301,13 +324,7 @@ export async function PATCH(
         ...(milestonesVal !== undefined && { milestones: milestonesVal }),
         ...(nextActionVal !== undefined && { nextAction: nextActionVal }),
         ...(nextActionDueAtVal !== undefined && { nextActionDueAt: nextActionDueAtVal }),
-        // propertyId: null unlinks; otherwise validated as string referencing a
-        // Property in this space. We don't load the row here — the FK will
-        // reject a mismatched id; validating at edit time adds a round-trip
-        // without additional safety.
-        ...(body.propertyId !== undefined && {
-          propertyId: body.propertyId ? String(body.propertyId).slice(0, 64) : null,
-        }),
+        ...(propertyIdVal !== undefined && { propertyId: propertyIdVal }),
         // Won/lost post-mortem fields — captured from the kanban dialog.
         // When the deal transitions back to active we clear them so stale
         // reasons don't confuse a later close.
@@ -317,6 +334,7 @@ export async function PATCH(
         updatedAt: new Date().toISOString(),
       })
       .eq('id', id)
+      .eq('spaceId', space.id)
       .select()
       .single();
     if (updateError) {
