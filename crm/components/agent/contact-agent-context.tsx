@@ -27,9 +27,11 @@ export function ContactAgentContext({ contactId }: ContactAgentContextProps) {
 
   useEffect(() => {
     const controller = new AbortController();
+    // Clear first so a reused instance never shows the previous contact's goal.
+    setCtx(null);
     fetch(`/api/agent/contact-context/${contactId}`, { signal: controller.signal })
       .then((r) => r.ok ? r.json() : null)
-      .then((data) => { if (data) setCtx(data); })
+      .then((data) => { if (!controller.signal.aborted) setCtx(data); })
       .catch(() => {});
     return () => controller.abort();
   }, [contactId]);

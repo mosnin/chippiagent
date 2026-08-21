@@ -29,6 +29,19 @@ interface DraftPreview {
 
 type Phase = 'loading' | 'preview' | 'error' | 'sending' | 'celebrating';
 
+/**
+ * What the inline Send button should do after a 200 from quick-draft.
+ * A failed delivery is not a win — celebrating it tells the realtor the
+ * message went out when it didn't, and they won't retry.
+ */
+export function resolveMorningSendOutcome(
+  deliveryResult?: { sent: boolean; error?: string } | null,
+): 'not_configured' | 'failed' | 'sent' {
+  if (deliveryResult?.error === 'not_configured') return 'not_configured';
+  if (deliveryResult && deliveryResult.sent === false) return 'failed';
+  return 'sent';
+}
+
 interface Props {
   slug: string;
   intent: MorningActionIntent;
@@ -109,9 +122,15 @@ export function MorningActionSheet({ slug, intent, context, onSent, onCancel }: 
       // instead of pretending the message went out. The other paths swap the
       // sheet for the inline celebration; the parent collapses only after
       // the dwell so the moment lands on the same surface that fired it.
-      if (data.deliveryResult?.error === 'not_configured') {
+      const outcome = resolveMorningSendOutcome(data.deliveryResult);
+      if (outcome === 'not_configured') {
         toast.success(`Saved for ${name}. Add an integration and I can auto-send next time.`);
         onSent();
+        return;
+      }
+      if (outcome === 'failed') {
+        toast.error("Couldn't send that. Try again.");
+        setPhase('preview');
         return;
       }
       const kind: ApprovalKind =
@@ -140,6 +159,7 @@ export function MorningActionSheet({ slug, intent, context, onSent, onCancel }: 
       initial={{ opacity: 0, y: -4 }}
       animate={{ opacity: 1, y: 0, transition: { duration: DURATION_BASE, ease: EASE_OUT } }}
       exit={{ opacity: 0, y: -4, transition: { duration: DURATION_BASE, ease: EASE_OUT } }}
+      data-phase={phase}
       className={cn(
         'mx-auto mt-4 max-w-xl rounded-lg border border-border/70 bg-card p-4 text-left',
       )}

@@ -82,8 +82,14 @@ export function MorningStory({ slug, isFresh = false }: Props) {
   // stray click can't dismiss the panel mid-send.
   useEffect(() => {
     if (!open) return;
+    function isSending() {
+      return !!containerRef.current?.querySelector('[data-phase="sending"]');
+    }
     function handlePointer(e: MouseEvent | TouchEvent) {
       if (!containerRef.current) return;
+      // Mid-send: the fetch is in flight. Dismissing would unmount the sheet
+      // and make the realtor think they cancelled a message that still goes out.
+      if (isSending()) return;
       const target = e.target as Node | null;
       if (target && !containerRef.current.contains(target)) {
         setOpen(false);
@@ -91,7 +97,7 @@ export function MorningStory({ slug, isFresh = false }: Props) {
       }
     }
     function handleKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') {
+      if (e.key === 'Escape' && !isSending()) {
         setOpen(false);
         setActiveCompose(null);
       }

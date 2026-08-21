@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import {
   Brain,
@@ -53,6 +53,23 @@ interface AgentContactData {
   memories: AgentMemory[];
   drafts: AgentDraft[];
   activity: AgentActivity[];
+}
+
+/** True only when the loaded payload belongs to the contact on screen. */
+export function isAgentContactDataCurrent(
+  data: { contactId: string } | null,
+  contactId: string,
+): boolean {
+  return data !== null && data.contactId === contactId;
+}
+
+/** Drop a fetch that started for a different contact than the one now on screen. */
+export function shouldApplyContactPayload(
+  data: { contactId: string } | null,
+  requestedId: string,
+  currentId: string,
+): boolean {
+  return requestedId === currentId && isAgentContactDataCurrent(data, requestedId);
 }
 
 const CHANNEL_PILL: Record<string, string> = {
@@ -189,19 +206,36 @@ export function AgentContactPanel({ contactId, slug, contactName }: { contactId:
   const [triggering, setTriggering] = useState(false);
   const [triggered, setTriggered] = useState(false);
   const [activeSection, setActiveSection] = useState<'drafts' | 'memories' | 'activity'>('drafts');
+  const contactIdRef = useRef(contactId);
+  contactIdRef.current = contactId;
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
+    const requestedId = contactId;
     try {
-      const res = await fetch(`/api/agent/contact/${contactId}`);
-      if (res.ok) setData(await res.json());
-    } catch {
+      const res = await fetch(`/api/agent/contact/${requestedId}`, { signal });
+      if (!res.ok) return;
+      const json = (await res.json()) as AgentContactData;
+      if (signal?.aborted) return;
+      // A refresh started on Alice must not land after the realtor opened Bob.
+      if (!shouldApplyContactPayload(json, requestedId, contactIdRef.current)) return;
+      setData(json);
+    } catch (err) {
+      if ((err as { name?: string })?.name === 'AbortError') return;
       // silently fail — panel is not critical path
     } finally {
-      setLoading(false);
+      if (!signal?.aborted && contactIdRef.current === requestedId) setLoading(false);
     }
   }, [contactId]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    const controller = new AbortController();
+    // Drop the previous contact immediately so a slow fetch can't leave
+    // Alice's drafts on Bob's page — Approve would send the wrong message.
+    setData(null);
+    setLoading(true);
+    void load(controller.signal);
+    return () => controller.abort();
+  }, [load]);
 
   async function handleApprove(draftId: string, content: string) {
     await fetch(`/api/agent/drafts/${draftId}`, {
@@ -242,10 +276,11 @@ export function AgentContactPanel({ contactId, slug, contactName }: { contactId:
     }
   }
 
-  const pendingDrafts = data?.drafts.filter(d => d.status === 'pending') ?? [];
-  const allDrafts = data?.drafts ?? [];
-  const memories = data?.memories ?? [];
-  const activity = data?.activity ?? [];
+  const current = isAgentContactDataCurrent(data, contactId) ? data : null;
+  const pendingDrafts = current?.drafts.filter(d => d.status === 'pending') ?? [];
+  const allDrafts = current?.drafts ?? [];
+  const memories = current?.memories ?? [];
+  const activity = current?.activity ?? [];
 
   if (loading) {
     return (

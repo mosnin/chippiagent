@@ -75,6 +75,17 @@ const AUTO_SEND_CONFIDENCE_THRESHOLD = 80;
 const AUTO_SEND_DELAY_MS = 30_000;
 const AUTO_SEND_TICK_MS = 250;
 
+/**
+ * PATCH body for /api/agent/drafts/[id]. The route keys off `status`, not
+ * `action` — sending the wrong field 400s and the draft never goes out.
+ */
+export function buildDraftPatchBody(
+  status: 'approved' | 'dismissed',
+  content?: string,
+): { status: 'approved' | 'dismissed'; content?: string } {
+  return content === undefined ? { status } : { status, content };
+}
+
 // ─── DraftRow ────────────────────────────────────────────────────────────────
 
 function DraftRow({
@@ -561,14 +572,21 @@ export function AgentDraftInbox({ slug }: Props) {
   const [approvingAll, setApprovingAll] = useState(false);
   const [deliveryFeedback, setDeliveryFeedback] = useState<DeliveryFeedback | null>(null);
   const feedbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // After the first paint, background polls must not flip `loading` — that
+  // unmounts every DraftRow, kills the send dialog, and wipes in-progress edits.
+  const hasLoadedRef = useRef(false);
 
   const load = useCallback(async () => {
-    setLoading(true);
+    const isInitial = !hasLoadedRef.current;
+    if (isInitial) setLoading(true);
     try {
       const res = await fetch('/api/agent/drafts?status=pending&limit=50');
       if (res.ok) setDrafts(await res.json());
     } finally {
-      setLoading(false);
+      if (isInitial) {
+        hasLoadedRef.current = true;
+        setLoading(false);
+      }
     }
   }, []);
 
@@ -600,14 +618,11 @@ export function AgentDraftInbox({ slug }: Props) {
       setDrafts((prev) => prev.filter((d) => d.id !== draftId));
     }
 
-    const body: Record<string, unknown> = { status };
-    if (content !== undefined) body.content = content;
-
     try {
       const res = await fetch(`/api/agent/drafts/${draftId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify(buildDraftPatchBody(status, content)),
       });
 
       if (!res.ok) {
@@ -650,7 +665,7 @@ export function AgentDraftInbox({ slug }: Props) {
         drafts.map((d) => fetch(`/api/agent/drafts/${d.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'approved', content: d.content }),
+          body: JSON.stringify(buildDraftPatchBody('approved', d.content)),
         }).then((r) => { if (!r.ok) throw new Error(r.status.toString()); }))
       );
       const failed = results.filter((r) => r.status === 'rejected').length;
