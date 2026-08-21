@@ -52,7 +52,8 @@ vi.mock('@/lib/supabase', () => {
       return next;
     });
     chain.delete = vi.fn(() => {
-      deleteCalls.push({ table, eqs: [...eqs] });
+      // eq() is chained after delete(), so keep the live array.
+      deleteCalls.push({ table, eqs });
       const next = { ...chain };
       next.then = (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) =>
         Promise.resolve({ data: null, error: null }).then(resolve, reject);
@@ -93,7 +94,7 @@ const ASSIGNED_CONTACT = {
   }),
 };
 
-function postReq(contactId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa') {
+function postReq(contactId = '550e8400-e29b-41d4-a716-446655440000') {
   return new NextRequest('http://localhost/api/broker/unassign-lead', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
