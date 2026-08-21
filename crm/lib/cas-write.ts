@@ -41,7 +41,7 @@ export async function casUpdate<T extends Record<string, unknown>>(opts: {
   const { data, error } = await q.select().maybeSingle();
   if (error) return { ok: false, reason: 'error', error };
   if (!data) return { ok: false, reason: 'conflict' };
-  return { ok: true, row: data as T };
+  return { ok: true, row: data as unknown as T };
 }
 
 export async function retryOnConflict<T extends { updatedAt?: string }>(opts: {
@@ -64,7 +64,7 @@ export async function retryOnConflict<T extends { updatedAt?: string }>(opts: {
     const { data, error } = await q.maybeSingle();
     if (error) return { ok: false, reason: 'error', error };
     if (!data) return { ok: false, reason: 'not_found' };
-    const current = data as T;
+    const current = data as unknown as T;
     const built = opts.build(current);
     if ('skip' in built) return { ok: true, row: current, skipped: true };
     if ('abort' in built) return { ok: false, reason: built.abort };

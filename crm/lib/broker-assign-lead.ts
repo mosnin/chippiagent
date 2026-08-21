@@ -88,13 +88,15 @@ export async function assignLeadToRealtor(params: {
   // another writer (leads-page new-lead clear, broker note) is last-write-wins
   // data loss — retry from a fresh read instead.
   const newContactId = crypto.randomUUID();
-  let assignmentMeta = '';
-  let rollback: {
-    tags: string[];
-    notes: string | null;
-    applicationStatus: string | null;
-    applicationStatusNote: string | null;
-  } | null = null;
+  const claimState: {
+    assignmentMeta: string;
+    rollback: {
+      tags: string[];
+      notes: string | null;
+      applicationStatus: string | null;
+      applicationStatusNote: string | null;
+    } | null;
+  } = { assignmentMeta: '', rollback: null };
 
   const claim = await retryOnConflict<Record<string, unknown> & { updatedAt: string }>({
     table: 'Contact',
@@ -104,14 +106,14 @@ export async function assignLeadToRealtor(params: {
       const existingTags: string[] = (current.tags as string[] | null) ?? [];
       if (existingTags.includes('assigned')) return { abort: 'conflict' };
       const now = new Date().toISOString();
-      assignmentMeta = JSON.stringify({
+      claimState.assignmentMeta = JSON.stringify({
         assignedTo: realtorUserId,
         assignedToName: realtorName,
         assignedContactId: newContactId,
         assignedSpaceId: realtorSpace.id,
         assignedAt: now,
       });
-      rollback = {
+      claimState.rollback = {
         tags: existingTags,
         notes: (current.notes as string | null) ?? null,
         applicationStatus: (current.applicationStatus as string | null) ?? null,
@@ -129,7 +131,7 @@ export async function assignLeadToRealtor(params: {
           tags: [...existingTags.filter((t: string) => t !== 'new-lead'), 'assigned'],
           notes: assignmentNote,
           applicationStatus: 'assigned',
-          applicationStatusNote: assignmentMeta,
+          applicationStatusNote: claimState.assignmentMeta,
           updatedAt: now,
         },
         match: { updatedAt: current.updatedAt },
@@ -159,7 +161,7 @@ export async function assignLeadToRealtor(params: {
     budget: claimed.budget,
     preferences: claimed.preferences,
     address: claimed.address,
-    notes: rollback?.notes ?? claimed.notes,
+    notes: claimState.rollback?.notes ?? claimed.notes,
     type: claimed.type,
     properties: claimed.properties ?? [],
     tags: ['assigned-by-broker', 'new-lead'],
@@ -171,19 +173,19 @@ export async function assignLeadToRealtor(params: {
     sourceLabel: `brokerage: ${brokerage.name}`,
     applicationData: claimed.applicationData,
     applicationRef: claimed.applicationRef,
-    applicationStatus: rollback?.applicationStatus ?? claimed.applicationStatus,
+    applicationStatus: claimState.rollback?.applicationStatus ?? claimed.applicationStatus,
   });
   if (cloneError) {
-    if (rollback && assignmentMeta) {
+    if (claimState.rollback && claimState.assignmentMeta) {
       await casUpdate({
         table: 'Contact',
         id: contactId,
-        match: { applicationStatusNote: assignmentMeta },
+        match: { applicationStatusNote: claimState.assignmentMeta },
         patch: {
-          tags: rollback.tags,
-          notes: rollback.notes,
-          applicationStatus: rollback.applicationStatus,
-          applicationStatusNote: rollback.applicationStatusNote,
+          tags: claimState.rollback.tags,
+          notes: claimState.rollback.notes,
+          applicationStatus: claimState.rollback.applicationStatus,
+          applicationStatusNote: claimState.rollback.applicationStatusNote,
           updatedAt: new Date().toISOString(),
         },
       });

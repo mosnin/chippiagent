@@ -70,6 +70,7 @@ export async function PATCH(
 
     const space = await getSpaceForUser(userId);
     if (!space) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    const spaceId = space.id;
 
     const { data: existingRows, error: existingError } = await supabase
       .from('Deal')
@@ -243,7 +244,7 @@ export async function PATCH(
         .from('Contact')
         .select('id')
         .in('id', wantedRaw)
-        .eq('spaceId', space.id);
+        .eq('spaceId', spaceId);
       if (vcError) {
         console.error('[deals/PATCH] contact validation error:', vcError);
         return NextResponse.json({ error: 'Failed to validate contacts' }, { status: 500 });
