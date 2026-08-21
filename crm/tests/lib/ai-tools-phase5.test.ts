@@ -87,6 +87,8 @@ beforeEach(() => {
   sendSMSMock.mockClear();
   sendSMSMock.mockResolvedValue(true);
   notifyNewDealMock.mockClear();
+  process.env.TELNYX_API_KEY = 'KEY_test';
+  process.env.TELNYX_FROM_NUMBER = '+14155550100';
 });
 
 // ── move_deal_stage ──────────────────────────────────────────────────────
@@ -214,8 +216,8 @@ describe('addChecklistItemTool', () => {
 
 // ── send_sms ─────────────────────────────────────────────────────────────
 describe('sendSmsTool', () => {
-  it('requires approval', () => {
-    expect(sendSmsTool.requiresApproval).toBe(true);
+  it('sends immediately without approval', () => {
+    expect(sendSmsTool.requiresApproval).toBe(false);
   });
 
   it('rejects when neither contactId nor toPhone is present', () => {
@@ -258,6 +260,20 @@ describe('sendSmsTool', () => {
     );
     expect(result.display).toBe('error');
     expect(result.summary).toMatch(/SMS send failed/);
+    expect(result.summary).not.toMatch(/pending draft|park/i);
+  });
+
+  it('hard-errors when Telnyx credentials are missing', async () => {
+    delete process.env.TELNYX_API_KEY;
+    delete process.env.TELNYX_FROM_NUMBER;
+    const result = await sendSmsTool.handler(
+      { toPhone: '+14155550000', body: 'hi' },
+      makeCtx(),
+    );
+    expect(sendSMSMock).not.toHaveBeenCalled();
+    expect(result.display).toBe('error');
+    expect(result.summary).toMatch(/TELNYX_API_KEY/);
+    expect(result.summary).not.toMatch(/pending draft|park/i);
   });
 });
 

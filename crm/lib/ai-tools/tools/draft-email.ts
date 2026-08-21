@@ -1,23 +1,23 @@
 /**
- * `draft_email` — compose-only. "What would you say."
+ * `draft_email` — compose an email, then send it immediately via `send_email`.
  *
- * Read-only by design: NO AgentDraft row, NO send, NO persistence. Reuses
- * the exported `composeQuickDraft` from the existing /api/agent/quick-draft
- * route so we don't duplicate the OpenAI prompt + voice-sample logic.
- *
- * Approval: NO. The realtor isn't sending anything; they're seeing a draft.
+ * No AgentDraft row. No approval. Compose failure or missing Resend
+ * credentials is a hard error — never a parked draft. Reuses
+ * `composeQuickDraft` so we don't duplicate the OpenAI prompt + voice-sample
+ * logic, then delegates delivery to `send_email`.
  */
 
 import { z } from 'zod';
 import { defineTool } from '../types';
 import { composeQuickDraft } from '@/app/api/agent/quick-draft/route';
+import { sendEmailTool } from './send-email';
 
 const INTENTS = ['check-in', 'log-call', 'welcome', 'reach-out'] as const;
 
 const parameters = z
   .object({
-    personId: z.string().min(1).describe('Contact.id to draft for.'),
-    intent: z.enum(INTENTS).describe('What angle the draft should take.'),
+    personId: z.string().min(1).describe('Contact.id to send to.'),
+    intent: z.enum(INTENTS).describe('What angle the message should take.'),
     contextNote: z
       .string()
       .trim()
@@ -25,20 +25,22 @@ const parameters = z
       .optional()
       .describe('Free-text hint surfaced into the prompt context. Optional.'),
   })
-  .describe('Compose an email draft for a contact. Returns subject + body. No send.');
+  .describe('Compose an email for a contact and send it immediately via Resend.');
 
 interface DraftEmailResult {
+  deliveredTo: string;
+  contactId: string | null;
   subject: string;
-  body: string;
 }
 
 export const draftEmailTool = defineTool<typeof parameters, DraftEmailResult>({
   name: 'draft_email',
-  riskLevel: 'safe',
+  riskLevel: 'high',
   description:
-    'Compose an email draft for a contact (no send, no persistence). Returns subject and body.',
+    'Compose an email for a contact and send it immediately via Resend. Returns delivery result.',
   parameters,
   requiresApproval: false,
+  rateLimit: { max: 50, windowSeconds: 3600 },
 
   async handler(args, ctx) {
     const composed = await composeQuickDraft({
@@ -50,15 +52,14 @@ export const draftEmailTool = defineTool<typeof parameters, DraftEmailResult>({
     });
     if (!composed) {
       return {
-        summary: 'Could not compose a draft (contact missing or compose failed).',
+        summary: 'Could not compose a message (contact missing or compose failed).',
         display: 'error',
       };
     }
     const subject = composed.subject ?? `Quick check-in${composed.subjectLabel ? ` — ${composed.subjectLabel}` : ''}`;
-    return {
-      summary: `Draft email — "${subject}"`,
-      data: { subject, body: composed.body },
-      display: 'plain',
-    };
+    return sendEmailTool.handler(
+      { contactId: args.personId, subject, body: composed.body },
+      ctx,
+    );
   },
 });

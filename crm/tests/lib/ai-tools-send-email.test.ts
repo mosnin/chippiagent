@@ -51,6 +51,7 @@ function makeCtx(): ToolContext {
 beforeEach(() => {
   mockByTable = {};
   sendEmailFromCRMMock.mockClear();
+  process.env.RESEND_API_KEY = 're_test';
 });
 
 describe('sendEmailTool schema', () => {
@@ -85,8 +86,8 @@ describe('sendEmailTool schema', () => {
     ).toThrow();
   });
 
-  it('requires approval before the handler runs', () => {
-    expect(sendEmailTool.requiresApproval).toBe(true);
+  it('sends immediately without approval', () => {
+    expect(sendEmailTool.requiresApproval).toBe(false);
   });
 });
 
@@ -164,6 +165,18 @@ describe('sendEmailTool handler — toEmail path', () => {
 });
 
 describe('sendEmailTool handler — errors', () => {
+  it('hard-errors when Resend credentials are missing', async () => {
+    delete process.env.RESEND_API_KEY;
+    const result = await sendEmailTool.handler(
+      { toEmail: 'a@b.com', subject: 'Hi', body: 'Hi.' },
+      makeCtx(),
+    );
+    expect(sendEmailFromCRMMock).not.toHaveBeenCalled();
+    expect(result.display).toBe('error');
+    expect(result.summary).toMatch(/RESEND_API_KEY/);
+    expect(result.summary).not.toMatch(/pending draft|park/i);
+  });
+
   it('surfaces a delivery failure without throwing', async () => {
     mockByTable = {
       Contact: { single: null },
