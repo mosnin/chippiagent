@@ -319,10 +319,10 @@ async def chat_turn(item: dict):
     space = Space(id=spr.data["id"], slug=spr.data["slug"], name=spr.data["name"])
     resolved_model = resolve_chat_model(agent_settings.chat_model)
 
-    ctx = AgentContext.from_settings(
+    ctx = AgentContext.for_space(
+        space,
         agent_settings,
         run_id=conversation_id or f"chat-{uuid.uuid4()}",
-        space_name=space.name,
     )
 
     # ── helpers ──────────────────────────────────────────────────────────────────────────
@@ -549,7 +549,8 @@ async def chat_turn(item: dict):
                 async for event in result.stream_events():
                     try:
                         out = translate(event)
-                    except Exception:
+                    except Exception as te:
+                        logger.warning("chat_turn_translate_failed", error=str(te)[:200])
                         out = None
                     if out:
                         streamed = True

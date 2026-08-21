@@ -50,6 +50,12 @@ from tour_follow_up import (
     tour_follow_up_instruction,
 )
 from llm import extract_usage, fallback_models, resolve_chat_model
+from run_safety import (
+    STREAM_TIMEOUT_S,
+    cancel_stream,
+    coerce_lpop_items,
+    stored_stream_error,
+)
 from tools.streaming import publish_event
 from tools.base import result_is_ok
 from trajectories import normalize_tool_call, record_trajectory
@@ -155,21 +161,48 @@ async def _run_with_fallback(
     # built the agent with), then the OpenRouter fallback chain.
     models = [agent.model, *(m for m in _FALLBACK_MODELS if m != agent.model)]
     for i, model in enumerate(models):
+        result = None
         try:
             agent.model = model
             result = Runner.run_streamed(
                 agent, input=input_data, run_config=run_config, context=context
             )
-            async for event in result.stream_events():
-                if not tools_ran and _translate_tool_event(event) is not None:
-                    tools_ran = True
-                if on_event is not None:
+
+            async def _drain() -> None:
+                nonlocal tools_ran
+                async for event in result.stream_events():
+                    if not tools_ran and _translate_tool_event(event) is not None:
+                        tools_ran = True
+                    if on_event is not None:
+                        try:
+                            on_event(event)
+                        except Exception as exc:
+                            # Telemetry must never break the run — but a
+                            # silent pass hid real on_event bugs.
+                            logger.warning(
+                                "stream_on_event_failed",
+                                error=str(exc)[:200],
+                            )
+                stored = stored_stream_error(result)
+                if stored is not None:
+                    raise stored
+
+            try:
+                await asyncio.wait_for(_drain(), timeout=STREAM_TIMEOUT_S)
+            except BaseException:
+                # Timeout, cancel, or a mid-stream error: stop the SDK
+                # background task so it cannot keep running after we
+                # fall back or requeue.
+                if result is not None:
                     try:
-                        on_event(event)
+                        cancel_stream(result)
                     except Exception:
-                        # Telemetry must never break the run.
-                        pass
+                        logger.warning("stream_cancel_failed")
+                raise
             return result
+        except asyncio.TimeoutError:
+            logger.warning("agent_stream_stalled", model=model, timeout_s=STREAM_TIMEOUT_S)
+            raise
         except (RateLimitError, APIStatusError) as exc:
             status = getattr(exc, "status_code", None)
             err_str = str(exc)
@@ -236,9 +269,9 @@ async def pop_triggers(space_id: str) -> list[dict]:
         # Redis op, so two concurrent runs for the same space can't both read
         # the same items — the lrange+ltrim it replaced was two ops and
         # double-processed triggers whenever runs overlapped.
-        items = await r.lpop(key, 10)
+        items = coerce_lpop_items(await r.lpop(key, 10))
         parsed = []
-        for item in (items or []):
+        for item in items:
             try:
                 obj = json.loads(item) if isinstance(item, str) else item
                 if not isinstance(obj, dict) or "event" not in obj:
@@ -470,190 +503,39 @@ async def _run_locked(
         space_memories, max_chars=settings.memory_chars_budget
     )
 
-    ctx = AgentContext.from_settings(agent_settings, run_id=run_id, space_name=space.name)
+    ctx = AgentContext.for_space(space, agent_settings, run_id=run_id)
     # A routine run is scoped to its instruction — don't drain the trigger
     # queue out from under a trigger-driven run.
     triggers = [] if instruction else await pop_triggers(space.id)
-    if triggers:
-        log.info("triggers_found", count=len(triggers), events=[t.get("event") for t in triggers])
-        for trigger in triggers:
-            if is_inbound_lead_event(trigger.get("event")) and trigger.get("contactId"):
-                try:
-                    ft = await ensure_first_touch_draft(space.id, trigger["contactId"])
-                    log.info(
-                        "first_touch_ensured",
-                        contact_id=trigger["contactId"],
-                        action=ft.get("action"),
-                        sent=ft.get("sent"),
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    log.warning(
-                        "first_touch_failed",
-                        contact_id=trigger.get("contactId"),
-                        error=str(exc)[:200],
-                    )
-            if is_inbound_message_event(trigger.get("event")) and trigger.get("contactId"):
-                try:
-                    reply = await ensure_first_touch_reply_draft(
-                        space.id,
-                        trigger["contactId"],
-                        reply_text=trigger.get("content"),
-                        source_draft_id=trigger.get("sourceDraftId"),
-                        channel=trigger.get("channel"),
-                    )
-                    log.info(
-                        "first_touch_reply_ensured",
-                        contact_id=trigger["contactId"],
-                        action=reply.get("action"),
-                        sent=reply.get("sent"),
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    log.warning(
-                        "first_touch_reply_failed",
-                        contact_id=trigger.get("contactId"),
-                        error=str(exc)[:200],
-                    )
-            if is_tour_completed_event(trigger.get("event")) and trigger.get("contactId"):
-                try:
-                    follow = await ensure_tour_follow_up_draft(
-                        space.id,
-                        trigger["contactId"],
-                        tour_id=trigger.get("tourId"),
-                    )
-                    log.info(
-                        "tour_follow_up_ensured",
-                        contact_id=trigger["contactId"],
-                        action=follow.get("action"),
-                        sent=follow.get("sent"),
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    log.warning(
-                        "tour_follow_up_failed",
-                        contact_id=trigger.get("contactId"),
-                        error=str(exc)[:200],
-                    )
-
-    log.info("agent_run_started", trigger_count=len(triggers), routine=bool(instruction))
-    await publish_event(
-        ctx, "info",
-        f"Starting run for '{space.name}'"
-        + (" — routine" if instruction else f" — {len(triggers)} trigger(s)" if triggers else " — sweep"),
-        agent_type="chippi",
-    )
-
-    # Load AI profile for personalization
-    db = await supabase()
-    ai_profile = await load_ai_profile(space.id, db)
-
-    # Autonomous runs have no "current user" — the workspace OWNER's
-    # Clerk userId is the entity whose Composio connections we use.
-    # Solo realtors: this is them. Brokerages: it's the broker_owner.
-    # Empty list when owner has no integrations or Composio is down.
-    integration_tools: list = []
-    try:
-        from integrations import load_integration_tools, resolve_owner_user_id
-
-        owner_clerk_id = await resolve_owner_user_id(space.id)
-        if owner_clerk_id:
-            integration_tools = await load_integration_tools(space.id, owner_clerk_id)
-    except Exception as ie:  # noqa: BLE001
-        log.warning("autonomous_load_integration_tools_failed", error=str(ie)[:200])
-
-    # Workspace info — mirrors the chat path so autonomous drafts include
-    # the realtor's intake URL where it's useful.
-    _app_url = (settings.app_url or "").rstrip("/")
-    # A localhost app_url (NEXT_PUBLIC_APP_URL missing from the Modal secret)
-    # must never become a customer-facing intake link in a drafted message.
-    if "localhost" in _app_url or "127.0.0.1" in _app_url:
-        _app_url = ""
-    intake_url = f"{_app_url}/apply/{space.slug}" if _app_url and space.slug else ""
-    workspace_info = (
-        "# Your workspace\n"
-        f"- Workspace: {space.name} (slug: {space.slug})\n"
-        f"- Intake link (share with new leads): {intake_url}\n"
-        "- Include the intake link in any contact-facing draft where it"
-        " makes sense — when reaching out to a fresh lead, when asking a"
-        " prospect to qualify, when nudging someone who never finished"
-        " applying. Use the full URL verbatim; no shortening."
-    ) if intake_url else None
-
-    chippi = make_chippi_agent(
-        ai_profile_text=ai_profile,
-        extra_tools=integration_tools,
-        workspace_info=workspace_info,
-        model=resolve_chat_model(agent_settings.chat_model),
-    )
-    prompt = _build_opening_prompt(space, memory_context, triggers, instruction)
-
-    run_config = RunConfig(
-        max_turns=settings.coordinator_max_turns,
-        # Tracing exports only reach OpenAI's backend; disable on a pure-
-        # OpenRouter deploy, which may carry no OpenAI key at all.
-        tracing_disabled=bool(settings.openrouter_api_key),
-        model_settings=ModelSettings(
-            max_tokens=settings.max_output_tokens,
-            truncation="auto",
-            # Parity with the chat path. Autonomous runs make unsupervised
-            # judgement calls — they need reasoning effort at least as much
-            # as chat, where it was already set to "medium".
-            reasoning=Reasoning(effort="medium"),
-        ),
-    )
-
+    # Anything after the pop must requeue on a non-success exit. Setup
+    # (supabase, make_chippi_agent) used to sit outside the try — a throw
+    # there dropped the realtor's events. CancelledError (Modal timeout)
+    # is BaseException, so except Exception also missed it.
+    completed = False
+    increment_on_requeue = True
+    chippi = None
     total_tokens = 0
     final_summary: str | None = None
-
-    # Per-tool stream emitter — publishes each tool call/result to Redis so
-    # the realtor's activity feed and the broker dashboard see what Chippi
-    # actually did, not just one opaque "I ran a sweep" summary. Fire-and-
-    # forget so the HTTP round-trip never throttles the SDK loop.
-    #
-    # Also captures the tool call into the trajectory accumulator. The two
-    # paths share the same _translate_tool_event payload so the realtor's
-    # live view and the offline trajectory record stay in lockstep.
-    # Tasks are kept in `publish_tasks` and drained in the finally below — a
-    # bare un-referenced create_task can be garbage-collected mid-flight, and
-    # the Modal container can tear down before the last events flush.
     publish_tasks: list[asyncio.Task] = []
-
-    def on_event(event: object) -> None:
-        payload = _translate_tool_event(event)
-        if payload is None:
-            return
-        trajectory_tool_calls.append(normalize_tool_call(payload))
-        publish_tasks.append(
-            asyncio.create_task(
-                publish_event(
-                    ctx,
-                    "action",
-                    payload["message"],
-                    metadata=payload["metadata"],
-                    agent_type="chippi",
-                )
-            )
-        )
-
     try:
-        # Run with automatic fallback through cheaper models on a 429.
-        # Streaming mode so on_event fires per tool call / result.
-        result = await _run_with_fallback(chippi, prompt, run_config, ctx, on_event=on_event)
-
-        _, _, total_tokens = extract_usage(result)
-        ctx.tokens_used = total_tokens
-
-        final_output = getattr(result, "final_output", None)
-        if isinstance(final_output, str):
-            final_summary = final_output[:280]
-
-        log.info("agent_run_completed", total_tokens=total_tokens, model_used=chippi.model)
-
+        await _process_popped_triggers(space, triggers, log)
+        chippi, total_tokens, final_summary = await _run_after_triggers(
+            space,
+            agent_settings,
+            ctx,
+            instruction,
+            triggers,
+            memory_context,
+            trajectory_tool_calls,
+            log,
+            publish_tasks,
+        )
+        completed = True
     except InputGuardrailTripwireTriggered as exc:
+        increment_on_requeue = False
         info = exc.guardrail_result.output.output_info or {}
         pending = info.get("pending_drafts", "?")
         log.info("agent_run_blocked_input_guardrail", pending_drafts=pending)
-        # Deferred, not failed — re-queue the triggers (no attempt increment)
-        # so the events still get processed once the drafts are reviewed.
-        await requeue_triggers(space.id, triggers, increment_attempts=False)
         await publish_event(
             ctx, "info",
             f"Run skipped — {pending} draft(s) awaiting review. Review your inbox first.",
@@ -665,21 +547,16 @@ async def _run_locked(
             started_at=started_at,
             status="guardrail_blocked",
             trigger=(triggers[0] if triggers else None),
-            model=chippi.model,
+            model=getattr(chippi, "model", None),
             total_tokens=total_tokens,
             tool_calls=trajectory_tool_calls,
             extra={"pending_drafts": pending},
         )
         return
-
     except Exception as exc:
+        increment_on_requeue = True
         log.exception("agent_run_failed")
-        # Re-queue so a crashed run doesn't silently drop the realtor's
-        # events; the per-trigger attempt cap stops a poison trigger looping.
-        await requeue_triggers(space.id, triggers, increment_attempts=True)
         await publish_event(ctx, "error", f"Agent error: {exc}", agent_type="chippi")
-        # Make the failure visible. A swallowed error leaves the realtor's
-        # activity feed blank with no signal that a run even happened.
         try:
             await save_memory(
                 space_id=space.id,
@@ -701,15 +578,24 @@ async def _run_locked(
             started_at=started_at,
             status="error",
             trigger=(triggers[0] if triggers else None),
-            model=chippi.model,
+            model=getattr(chippi, "model", None),
             total_tokens=total_tokens,
             tool_calls=trajectory_tool_calls,
             extra={"error": str(exc)[:500]},
         )
         return
     finally:
-        # Drain the fire-and-forget publish tasks so the realtor's activity
-        # feed gets every tool event before the Modal container exits.
+        if not completed and triggers:
+            try:
+                await requeue_triggers(
+                    space.id, triggers, increment_attempts=increment_on_requeue
+                )
+            except Exception as requeue_exc:
+                log.warning(
+                    "requeue_triggers_failed",
+                    space_id=space.id,
+                    error=str(requeue_exc)[:200],
+                )
         if publish_tasks:
             await asyncio.gather(*publish_tasks, return_exceptions=True)
 
@@ -739,9 +625,177 @@ async def _run_locked(
         started_at=started_at,
         status="completed",
         trigger=(triggers[0] if triggers else None),
-        model=chippi.model,
+        model=getattr(chippi, "model", None),
         total_tokens=total_tokens,
         tool_calls=trajectory_tool_calls,
         final_summary=final_summary,
     )
     log.info("agent_run_finished", total_tokens=total_tokens)
+
+
+async def _process_popped_triggers(space: Space, triggers: list[dict], log) -> None:
+    """Send first-touch / reply / tour-follow-up SMS for popped events.
+
+    Failures here are logged and skipped — the TypeScript fire-time send
+    is the primary path; this is the autonomous-run backstop. A throw
+    still bubbles to `_run_locked` and requeues the remaining events.
+    """
+    if not triggers:
+        return
+    log.info("triggers_found", count=len(triggers), events=[t.get("event") for t in triggers])
+    for trigger in triggers:
+        if is_inbound_lead_event(trigger.get("event")) and trigger.get("contactId"):
+            try:
+                ft = await ensure_first_touch_draft(space.id, trigger["contactId"])
+                log.info(
+                    "first_touch_ensured",
+                    contact_id=trigger["contactId"],
+                    action=ft.get("action"),
+                    sent=ft.get("sent"),
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning(
+                    "first_touch_failed",
+                    contact_id=trigger.get("contactId"),
+                    error=str(exc)[:200],
+                )
+        if is_inbound_message_event(trigger.get("event")) and trigger.get("contactId"):
+            try:
+                reply = await ensure_first_touch_reply_draft(
+                    space.id,
+                    trigger["contactId"],
+                    reply_text=trigger.get("content"),
+                    source_draft_id=trigger.get("sourceDraftId"),
+                    channel=trigger.get("channel"),
+                )
+                log.info(
+                    "first_touch_reply_ensured",
+                    contact_id=trigger["contactId"],
+                    action=reply.get("action"),
+                    sent=reply.get("sent"),
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning(
+                    "first_touch_reply_failed",
+                    contact_id=trigger.get("contactId"),
+                    error=str(exc)[:200],
+                )
+        if is_tour_completed_event(trigger.get("event")) and trigger.get("contactId"):
+            try:
+                follow = await ensure_tour_follow_up_draft(
+                    space.id,
+                    trigger["contactId"],
+                    tour_id=trigger.get("tourId"),
+                )
+                log.info(
+                    "tour_follow_up_ensured",
+                    contact_id=trigger["contactId"],
+                    action=follow.get("action"),
+                    sent=follow.get("sent"),
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning(
+                    "tour_follow_up_failed",
+                    contact_id=trigger.get("contactId"),
+                    error=str(exc)[:200],
+                )
+
+
+async def _run_after_triggers(
+    space: Space,
+    agent_settings: AgentSettings,
+    ctx: AgentContext,
+    instruction: str | None,
+    triggers: list[dict],
+    memory_context: str,
+    trajectory_tool_calls: list[dict],
+    log,
+    publish_tasks: list[asyncio.Task],
+) -> tuple[object, int, str | None]:
+    """Build Chippi and run. Raises on failure so `_run_locked` requeues."""
+    log.info("agent_run_started", trigger_count=len(triggers), routine=bool(instruction))
+    await publish_event(
+        ctx, "info",
+        f"Starting run for '{space.name}'"
+        + (" — routine" if instruction else f" — {len(triggers)} trigger(s)" if triggers else " — sweep"),
+        agent_type="chippi",
+    )
+
+    db = await supabase()
+    ai_profile = await load_ai_profile(space.id, db)
+
+    integration_tools: list = []
+    try:
+        from integrations import load_integration_tools, resolve_owner_user_id
+
+        owner_clerk_id = await resolve_owner_user_id(space.id)
+        if owner_clerk_id:
+            # Composio is sync-over-to_thread with no deadline. A hung
+            # toolkit catalog used to stall the whole run until Modal
+            # killed it — after the trigger was already popped.
+            integration_tools = await asyncio.wait_for(
+                load_integration_tools(space.id, owner_clerk_id),
+                timeout=20,
+            )
+    except Exception as ie:  # noqa: BLE001
+        log.warning("autonomous_load_integration_tools_failed", error=str(ie)[:200])
+
+    _app_url = (settings.app_url or "").rstrip("/")
+    if "localhost" in _app_url or "127.0.0.1" in _app_url:
+        _app_url = ""
+    intake_url = f"{_app_url}/apply/{space.slug}" if _app_url and space.slug else ""
+    workspace_info = (
+        "# Your workspace\n"
+        f"- Workspace: {space.name} (slug: {space.slug})\n"
+        f"- Intake link (share with new leads): {intake_url}\n"
+        "- Include the intake link in any contact-facing draft where it"
+        " makes sense — when reaching out to a fresh lead, when asking a"
+        " prospect to qualify, when nudging someone who never finished"
+        " applying. Use the full URL verbatim; no shortening."
+    ) if intake_url else None
+
+    chippi = make_chippi_agent(
+        ai_profile_text=ai_profile,
+        extra_tools=integration_tools,
+        workspace_info=workspace_info,
+        model=resolve_chat_model(agent_settings.chat_model),
+    )
+    prompt = _build_opening_prompt(space, memory_context, triggers, instruction)
+
+    run_config = RunConfig(
+        max_turns=settings.coordinator_max_turns,
+        tracing_disabled=bool(settings.openrouter_api_key),
+        model_settings=ModelSettings(
+            max_tokens=settings.max_output_tokens,
+            truncation="auto",
+            reasoning=Reasoning(effort="medium"),
+        ),
+    )
+
+    def on_event(event: object) -> None:
+        payload = _translate_tool_event(event)
+        if payload is None:
+            return
+        trajectory_tool_calls.append(normalize_tool_call(payload))
+        publish_tasks.append(
+            asyncio.create_task(
+                publish_event(
+                    ctx,
+                    "action",
+                    payload["message"],
+                    metadata=payload["metadata"],
+                    agent_type="chippi",
+                )
+            )
+        )
+
+    result = await _run_with_fallback(chippi, prompt, run_config, ctx, on_event=on_event)
+
+    _, _, total_tokens = extract_usage(result)
+    ctx.tokens_used = total_tokens
+
+    final_output = getattr(result, "final_output", None)
+    final_summary = final_output[:280] if isinstance(final_output, str) else None
+
+    log.info("agent_run_completed", total_tokens=total_tokens, model_used=chippi.model)
+    return chippi, total_tokens, final_summary

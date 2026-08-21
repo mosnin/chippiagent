@@ -12,7 +12,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from schemas import AgentSettings
+from schemas import AgentSettings, Space
+from run_safety import bind_space_id
 
 
 @dataclass
@@ -30,6 +31,16 @@ class AgentContext:
     # this when stamping AgentActivityLog rows; keep the field so call sites
     # don't have to special-case the single-agent world.
     current_agent_type: str = field(default="chippi", compare=False)
+
+    @classmethod
+    def for_space(cls, space: Space, settings: AgentSettings, run_id: str) -> "AgentContext":
+        """Bind tools to Space.id. Refuse if AgentSettings.spaceId disagrees."""
+        return cls(
+            space_id=bind_space_id(space_id=space.id, settings_space_id=settings.space_id),
+            space_name=space.name,
+            daily_token_budget=settings.daily_token_budget,
+            run_id=run_id,
+        )
 
     @classmethod
     def from_settings(cls, settings: AgentSettings, run_id: str, space_name: str) -> "AgentContext":
