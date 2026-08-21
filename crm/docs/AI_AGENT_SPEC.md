@@ -1,15 +1,15 @@
 # AI Agent Runtime
 
 > The core agent runtime that turns a realtor's natural-language request into a
-> streamed sequence of tool calls, approval prompts for mutations, and final
-> text — all persisted as a typed `MessageBlock[]` so conversations survive
-> reload and broker-review.
+> streamed sequence of tool calls that execute immediately — Chippi sends email
+> and SMS, writes CRM records, and reports back — all persisted as a typed
+> `MessageBlock[]` so conversations survive reload and broker-review.
 
 A realtor types `"email Jane about the tour Friday"`; the server opens an SSE
-stream, the model plans a `send_email` call, the client shows an approval
-card, the realtor approves, the email ships, and a `ToolCallBlock` lands in
-the transcript. This doc is the reference for every contract that makes that
-flow work: the SSE event union, the persisted block shape, the tool registry, the pending-approval store, and the sub-agent ("Skill") pattern layered on top.
+stream, the model plans a `send_email` call, Chippi sends the email, and a
+`ToolCallBlock` lands in the transcript. This doc is the reference for every
+contract that makes that flow work: the SSE event union, the persisted block
+shape, the tool registry, and the sub-agent ("Skill") pattern layered on top.
 
 **Runtime status (May 2026).** Chat turns run inside a **Modal sandbox** (`agent/modal_app.py`) via the **OpenAI Agents SDK** Python package (`openai-agents`), using **gpt-5-mini** with `reasoning_effort="medium"` enabled. The Next.js layer in `POST /api/ai/task` proxies SSE events from Modal, translates them to the standard `AgentEvent` wire format, and persists the turn on completion. Reasoning tokens stream to the browser as `reasoning_delta` events and surface in the collapsible "Thinking" UI. Background, event-driven autonomous activation is handled by Redis + Modal webhook triggers in `POST /api/agent/trigger` (policy controlled by `AGENT_IMMEDIATE_EVENTS`: `all` by default, or a comma-separated subset of event names; invalid values fail safe to `all`). Set `CHIPPI_CHAT_RUNTIME=ts` to fall back to the in-process TypeScript runtime for local development without a Modal deployment.
 
@@ -19,7 +19,7 @@ flow work: the SSE event union, the persisted block shape, the tool registry, th
 2. [Wire protocol](#2-wire-protocol)
 3. [MessageBlock types](#3-messageblock-types)
 4. [Tools](#4-tools)
-5. [Approval flow](#5-approval-flow)
+5. [Autonomous execution](#5-autonomous-execution)
 6. [Sub-agents (Skills)](#6-sub-agents-skills)
 7. [Observability](#7-observability)
 8. [Deprecated / removed](#8-deprecated--removed)
@@ -60,15 +60,12 @@ Browser SSE client
    └─ turn_complete   → mark turn settled, clear streamingReasoning
 ```
 
-**Pause / resume.** When the model emits a tool call whose
-`ToolDefinition.requiresApproval` is truthy, the loop stops round-processing,
-builds a `PendingApprovalState` (loop.ts:55), hands it back to the route
-handler which `savePendingApproval`'s it to Redis (pending-approvals.ts:54),
-and closes the SSE stream with `turn_complete.reason = 'paused'`. The client
-renders an approval card; on approve/deny the client hits
-`POST /api/ai/task/approve/[requestId]`, which `consumePendingApproval` (atomic
-`GETDEL`, pending-approvals.ts:77) pulls the saved state and
-`continueTurn` (lib/ai-tools/continue-turn.ts) resumes.
+**Execution.** When the model emits a tool call, the loop validates args and
+invokes `executeTool` in the same stream. Write and send tools (`send_email`,
+`send_sms`, CRM mutations) run immediately — Chippi sends and acts. The
+stream stays open through tool results and any follow-on model turns until
+`turn_complete.reason = 'complete'`. There is no human-in-the-loop pause,
+draft-for-approval, pending-review, or wait-for-human step.
 
 **Persistence.** Every assistant turn is persisted to the `Message` table
 with a `blocks JSONB` column (added in
@@ -97,36 +94,6 @@ Starts (or continues) a conversation.
 - **Response**: `text/event-stream` with `X-Accel-Buffering: no`. Events are
   instances of `AgentEvent` (events.ts:17) encoded one-per-frame.
 
-### `POST /api/ai/task/approve/[requestId]`
-
-Resumes a paused turn.
-
-- **Auth**: `requireAuth` + ownership check against the persisted state's
-  `userId` (403 on mismatch); `resolveToolContext` rebuilds a fresh space
-  context for the resumed run.
-- **Rate limit**: **60 per hour per user**, keyed `ai:task-approve:{userId}`
-  (route.ts:71).
-- **Body**:
-  ```ts
-  { decision: 'approved' | 'denied'; editedArgs?: Record<string, unknown> }
-  ```
-  `editedArgs` (Phase 3d) lets the user tweak the tool's JSON args before
-  approval runs them.
-- **Response**: same SSE shape as `/api/ai/task`. The continuation stream
-  typically emits `permission_resolved` immediately, then the resumed
-  `tool_call_start` / `tool_call_result` (or cascade `PermissionBlock`s on
-  deny), optionally more `text_delta`, and a final `turn_complete`. If the
-  resumed turn hits another mutating call, it emits a new
-  `permission_required` and stashes a fresh `PendingApprovalState`.
-
-Error responses:
-- `400` malformed body
-- `403` not the request's owner
-- `410` request not found (expired or already consumed) — the TTL is
-  **15 minutes** (pending-approvals.ts:24)
-- `429` rate limit
-- `503` OpenAI key missing
-
 ### Frame format
 
 Each SSE frame is:
@@ -153,8 +120,7 @@ The persisted form of a turn. Client renders via `Transcript`
 | Type | Shape (blocks.ts) | When emitted |
 |---|---|---|
 | `text` | `{ type: 'text', content: string }` | Default assistant reply; accumulated from `text_delta` events |
-| `tool_call` | `{ type: 'tool_call', callId, name, args, result?, status: 'complete' \| 'error' \| 'denied' \| 'skipped', display? }` | A tool was actually invoked (not a prompt) |
-| `permission` | `{ type: 'permission', callId, name, args, summary, decision: 'denied' \| 'dismissed', display? }` | User denied a mutating tool, or the batch cascaded denial |
+| `tool_call` | `{ type: 'tool_call', callId, name, args, result?, status: 'complete' \| 'error', display? }` | A tool ran in-stream (read, write, or send) |
 
 **coalesceTextBlocks** (blocks.ts:72) collapses adjacent text blocks at
 save-time so many tiny `text_delta` fragments become one block in the DB.
@@ -175,21 +141,20 @@ as `[{ type: 'text', content }]` for rows that predate the JSONB column.
 | `name` | snake_case identifier exposed to the model (unique across the registry) |
 | `description` | One-sentence description for the model |
 | `parameters` | Zod schema — validated in `executeTool` before the handler runs |
-| `requiresApproval` | `true` → always prompt; `false` → auto-run; `'maybe'` → inspect args via `shouldApprove` |
-| `summariseCall?` | `(args) => string` — the one-line "what will happen" blurb shown in the approval prompt. **Mandatory** for mutating tools or the user sees generic JSON |
+| `summariseCall?` | `(args) => string` — the one-line "what happened / will happen" blurb shown in the transcript. **Mandatory** for write/send tools or the realtor sees generic JSON |
 | `rateLimit?` | `{ max: number; windowSeconds: number }` — per-user per-tool cap enforced in `executeTool` |
-| `shouldApprove?` | Only consulted when `requiresApproval === 'maybe'` |
 | `handler` | `async (args, ctx) => ToolResult` |
 
 Every tool is declared via `defineTool(...)` which preserves
 `z.infer<TSchema>` for the handler's `args` type.
 
-### Read-only vs mutating
+### Read vs write/send
 
-Auto-running tools skip the approval round-trip and land their
-`ToolCallBlock` inside the same streaming response. Mutating tools cause
-the loop to pause (see §5). `requireApproval === 'maybe'` is a future
-hook — currently unused in the registered catalog.
+Every registered tool runs in the same streaming response and lands a
+`ToolCallBlock` when it finishes. Read tools return data. Write and send
+tools change the workspace or the outside world immediately — Chippi
+sends the email, sends the SMS, updates the contact, books the tour.
+Rate limits are the execution cap, not a human gate. See §5.
 
 ### Registry
 
@@ -199,76 +164,54 @@ layer — **intentionally NOT in `ALL_TOOLS`** so that `validateSkill`
 (called with `ALL_TOOLS`) can't allow a skill to nest another
 `delegate_to_subagent`. Combined list:
 
-| Tool | Approval | Rate limit | Notes |
+| Tool | Executes | Rate limit | Notes |
 |---|---|---|---|
-| `search_contacts` | auto | none | Space-scoped ILIKE search |
-| `search_deals` | auto | none | Same, joins DealStage |
-| `get_contact` | auto | none | Single contact + linked deals + recent tours |
-| `pipeline_summary` | auto | none | Classifies deals via `lib/deals/health.ts` |
-| `send_email` | required | **50/hr** (send-email.ts:76) | Sends via `sendEmailFromCRM`; logs `ContactActivity` |
-| `send_sms` | required | **30/hr** (send-sms.ts:63) | Telnyx; logs ContactActivity as `type:'note', metadata.channel:'sms'` |
-| `update_contact` | required | **100/hr** (update-contact.ts:68) | Fires `syncContact` for search reindex |
-| `advance_deal_stage` | required | **60/hr** (advance-deal-stage.ts:48) | Writes `stage_change` DealActivity + `syncDeal` |
-| `create_deal` | required | **30/hr** (create-deal.ts:62) | Mirrors POST /api/deals including buyer-pipeline auto-routing |
-| `schedule_tour` | required | **30/hr** (schedule-tour.ts:70) | Accepts contactId OR walk-in guest fields |
-| `add_checklist_item` | required | **60/hr** (add-checklist-item.ts:62) | Single item; seeding templates is explicit, not a tool |
-| `delegate_to_subagent` | auto | **20/hr** (delegate-to-subagent.ts:63) | Meta-tool; dispatches to Skills (see §6) |
+| `search_contacts` | in-stream | none | Space-scoped ILIKE search |
+| `search_deals` | in-stream | none | Same, joins DealStage |
+| `get_contact` | in-stream | none | Single contact + linked deals + recent tours |
+| `pipeline_summary` | in-stream | none | Classifies deals via `lib/deals/health.ts` |
+| `send_email` | in-stream — Chippi sends | **50/hr** (send-email.ts:76) | Sends via `sendEmailFromCRM`; logs `ContactActivity` |
+| `send_sms` | in-stream — Chippi sends | **30/hr** (send-sms.ts:63) | Telnyx; logs ContactActivity as `type:'note', metadata.channel:'sms'` |
+| `update_contact` | in-stream | **100/hr** (update-contact.ts:68) | Fires `syncContact` for search reindex |
+| `advance_deal_stage` | in-stream | **60/hr** (advance-deal-stage.ts:48) | Writes `stage_change` DealActivity + `syncDeal` |
+| `create_deal` | in-stream | **30/hr** (create-deal.ts:62) | Mirrors POST /api/deals including buyer-pipeline auto-routing |
+| `schedule_tour` | in-stream | **30/hr** (schedule-tour.ts:70) | Accepts contactId OR walk-in guest fields |
+| `add_checklist_item` | in-stream | **60/hr** (add-checklist-item.ts:62) | Single item; seeding templates is explicit, not a tool |
+| `delegate_to_subagent` | in-stream | **20/hr** (delegate-to-subagent.ts:63) | Meta-tool; dispatches to Skills (see §6) |
 
 Rate limits are per **user + tool** (executeTool keys with
 `ai:tool:${tool.name}:${ctx.userId}`).
 
 ---
 
-## 5. Approval flow
+## 5. Autonomous execution
 
-### Why mutations pause
+Chippi is autonomous. When the model plans a write or send, the loop runs
+it. The realtor sees what Chippi did in the transcript. There is no draft
+queue, pending-review step, or optional-approval leftover.
 
-Tools that touch the outside world (send_email) or write to the CRM
-(update_contact) could produce irreversible side-effects. The agent plans a
-call; the loop builds a `DeferredToolCall` (loop.ts:44) + any other mutating
-calls in the same batch, stashes them in `PendingApprovalState`
-(loop.ts:55):
+### Same-stream execution
 
-```ts
-{
-  requestId: string;                // uuid; used as URL path segment
-  pending: DeferredToolCall;        // the call awaiting approval
-  remainingCalls: DeferredToolCall[]; // siblings in the batch (if any)
-  messages: ChatMsg[];              // the assistant+tool transcript so far,
-                                    // replayed verbatim on resume
-}
-```
+1. The model emits one or more tool calls.
+2. `executeTool` validates args, enforces the tool's `rateLimit`, and
+   invokes the handler.
+3. The stream emits `tool_call_start` then `tool_call_result`.
+4. The model continues with those results until it produces final text.
+5. The route persists `Message.blocks` and closes with
+   `turn_complete.reason = 'complete'`.
 
-…and emits `permission_required` before returning.
-`savePendingApproval` writes to Redis with key
-`agent-task:pending:${requestId}` and a **15 minute TTL**
-(pending-approvals.ts:24). Absent Redis, the proxy silently no-ops and the
-approve endpoint returns 410.
+Background activation (`POST /api/agent/trigger`) uses the same contract:
+event-woken runs send and write without waiting for a human.
 
-### Approve path
+### What stops a send
 
-`continueTurn` (lib/ai-tools/continue-turn.ts) runs the approved call with
-any `editedArgs` override, executes each remaining batch call (pausing
-again for the next mutating one), and finally invokes a fresh `runTurn` so
-the model gets a chance to react to the tool outputs.
+Rate limits, auth/space scope, missing credentials, and handler errors.
+Not a human gate.
 
-### Deny path
+### Skills stay read-only
 
-`continueTurn` calls `recordDenied` for the pending call AND every
-`remainingCall` — a single deny cascades through the entire batch
-(continue-turn.ts). Each cascaded call lands as a `PermissionBlock` with
-`decision: 'denied'`. The client learns about cascaded calls from the
-`otherPendingCalls` array on the initial `permission_required` event
-(events.ts:67 — added specifically so the transcript reflects cascade-deny
-live, not only after a page reload).
-
-### Client-side "Always allow for this chat"
-
-`useAgentTask` maintains a per-conversation `Set<string>` of tool names the
-user trusted (`sessionStorage`, key `agent-allow:<conversationId>`). When a
-`permission_required` event fires and the tool is in the allow-set AND the
-stream isn't otherwise busy, the hook auto-fires `approve(requestId)`.
-Gated by `autoApprovedRef` to prevent React 18 strict-mode double-invoke.
+Sub-agents (§6) may only call read tools. The orchestrator owns send and
+write. That split is about context-rot prevention, not human gates.
 
 ---
 
@@ -299,7 +242,7 @@ Runs at module load (skills/types.ts:69). Rejects a skill if:
 1. Any `toolAllowlist` name is in `SKILL_FORBIDDEN_TOOLS` (currently just
    `delegate_to_subagent` — prevents sub-agent recursion; types.ts:65).
 2. Any allowlisted tool isn't in the registry.
-3. Any allowlisted tool has `requiresApproval !== false`.
+3. Any allowlisted tool is a write/send tool (skills are read-only).
 
 ### runSubAgent
 
@@ -368,7 +311,11 @@ Rate-limit hits log separately:
 | Gone | Removed in | Notes |
 |---|---|---|
 | `POST /api/ai/chat` | Phase 4b (a23aefb) | Replaced by `/api/ai/task` — the old route used a pre-tool-use completion shape |
-| `POST /api/ai/action` | Phase 6e (4ff6a77) | Legacy draft-card flow from the Phase 13 deals redesign, superseded by the tool-use + approval model |
+| `POST /api/ai/action` | Phase 6e (4ff6a77) | Legacy draft-card flow from the Phase 13 deals redesign, superseded by in-stream tool-use |
+| `POST /api/ai/task/approve/[requestId]` | 2026-08-21 product contract | Legacy human-in-the-loop resume. Not the product. Do not document or reintroduce as a realtor step |
+| Pending-approval Redis store | 2026-08-21 product contract | Legacy pause/resume stash. Chippi sends in the original stream |
+| `permission_required` / `permission_resolved` events | 2026-08-21 product contract | Legacy pause/resume wire. Current turns emit tool events and complete |
+| `requiresApproval` / `shouldApprove` tool fields | 2026-08-21 product contract | Leftover registry fields. Product contract is execute + `rateLimit` |
 | `components/ai/message-bubble.tsx` | Phase 6e (4ff6a77) | Rendered the legacy string-content messages with ACTION blocks |
 | `components/ai/action-card.tsx` | Phase 6e (4ff6a77) | Action-card UI for the pre-BP6e flow |
 
@@ -388,9 +335,7 @@ cited above.
 | `reasoning_delta` | `delta: string` | Model reasoning token chunk; accumulated in `streamingReasoning` for the collapsible "Thinking" UI; never stored in `MessageBlock[]` |
 | `tool_call_start` | `callId, name, args, display?` | Loop has validated args and is about to invoke `executeTool` |
 | `tool_call_result` | `callId, ok, summary, data?, error?` | `executeTool` returned (success or handled failure) |
-| `permission_required` | `requestId, callId, name, args, summary, display?, otherPendingCalls?` | Loop hit a mutating tool; `otherPendingCalls` enumerates the cascade-deny targets |
-| `permission_resolved` | `requestId, callId, decision, editedArgs?` | Emitted at the head of the resume stream so the client can clear the prompt |
-| `turn_complete` | `reason: 'complete' \| 'paused' \| 'aborted'` | Terminal event; always last in a stream |
+| `turn_complete` | `reason: 'complete' \| 'aborted'` | Terminal event; always last in a stream |
 | `error` | `message, code?: 'rate_limited' \| 'quota' \| 'internal' \| 'auth'` | Unrecoverable turn failure (distinct from a tool failure, which keeps the turn alive) |
 
 ### Table 2 — `ToolExecutionError.code` (execute.ts:20)
@@ -418,16 +363,11 @@ single entry point for UI code. It exposes:
 |---|---|
 | `messages` | `UiMessage[]` — each has id, role, blocks, streaming? |
 | `isStreaming` | Whether any fetch is in flight |
-| `pendingApproval` | The current `PermissionPromptData` or null |
 | `liveCallIds` | `Set<string>` of tool-call ids currently in-flight (for status-overrides in ToolCallBlockView) |
 | `error` | User-facing error string or null |
-| `send(text)` | Start a new turn |
-| `approve(requestId, editedArgs?)` | Approve a pending call |
-| `deny(requestId)` | Deny + cascade |
-| `alwaysAllow(requestId, editedArgs?)` | Approve AND add the tool to the session allow-list |
+| `send(text)` | Start a new turn. Write/send tools run in that turn. |
 | `abort()` | Cancel the current stream |
 
-Rendering is delegated to four block views under
-`components/ai/blocks/` (Text, ToolCall, Permission prompt, Permission
-block) orchestrated by `Transcript`. Tests live under
-`tests/lib/ai-tools-*.test.ts`.
+Rendering is delegated to block views under
+`components/ai/blocks/` (Text, ToolCall) orchestrated by `Transcript`.
+Tests live under `tests/lib/ai-tools-*.test.ts`.

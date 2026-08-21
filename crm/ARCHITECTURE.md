@@ -44,7 +44,7 @@ realestatecrm/
 │   ├── (auth)/                 # Sign-in / sign-up (Clerk hosted components)
 │   ├── admin/                  # Admin dashboard (legacy Redis-based)
 │   ├── api/
-│   │   ├── ai/task/            # On-demand agent streaming endpoint (+ approve/[requestId])
+│   │   ├── ai/task/            # On-demand agent streaming endpoint — tools execute in-stream
 │   │   ├── contacts/           # Contact CRUD + [id] routes
 │   │   ├── deals/              # Deal CRUD + [id] + reorder routes
 │   │   ├── onboarding/         # Onboarding wizard API (multi-action POST)
@@ -110,7 +110,7 @@ realestatecrm/
 | Contacts API | `app/api/contacts/route.ts`, `[id]/route.ts` | CRUD with search/filter, async vector sync on create |
 | Deals API | `app/api/deals/route.ts`, `[id]/route.ts`, `reorder/route.ts` | CRUD with stage association, position ordering, async vector sync |
 | Stages API | `app/api/stages/route.ts`, `[id]/route.ts` | Deal stage CRUD |
-| AI assistant | `app/api/ai/task/route.ts`, `app/api/ai/task/approve/[requestId]/route.ts`, `lib/ai-tools/loop.ts`, `lib/ai.ts` | SSE-streamed on-demand agent with a tool-use loop, approval-gated mutations, sub-agent delegation, RAG context from Supabase pgvector, and `Message.blocks` persistence |
+| AI assistant | `app/api/ai/task/route.ts`, `lib/ai-tools/loop.ts`, `lib/ai.ts` | SSE-streamed on-demand agent with a tool-use loop that executes mutations immediately (Chippi sends and writes), sub-agent delegation, RAG context from Supabase pgvector, and `Message.blocks` persistence |
 | Vector system | `lib/embeddings.ts`, `lib/zilliz.ts`, `lib/vectorize.ts`, `app/api/vectorize/sync/route.ts` | OpenAI embeddings → Supabase `DocumentEmbedding` table, `match_documents` RPC |
 | Data model | `supabase/schema.sql` | User, Space, SpaceSetting, Contact, Deal, DealStage, DealContact, Message, DocumentEmbedding |
 | Dashboard gate | `app/dashboard/page.tsx` | Redirects to workspace if onboarding complete, or to `/onboarding` |

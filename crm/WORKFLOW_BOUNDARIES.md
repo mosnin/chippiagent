@@ -150,7 +150,7 @@ This document defines clear boundaries between each major workflow in Chippi. AI
 | **Purpose** | Triage and follow-up operations for the authenticated realtor |
 | **Trigger** | Authenticated workspace usage at `/s/[slug]/*` |
 | **Source of truth** | `Contact`, `Deal`, `DealStage`, `DealContact`, `Message` records |
-| **Key files** | `app/s/[slug]/*`, `app/api/contacts/*`, `app/api/deals/*`, `app/api/stages/*`, `app/api/ai/task/route.ts`, `app/api/ai/task/approve/[requestId]/route.ts` |
+| **Key files** | `app/s/[slug]/*`, `app/api/contacts/*`, `app/api/deals/*`, `app/api/stages/*`, `app/api/ai/task/route.ts` |
 | **Can change** | CRM records, pipeline ordering, deal stage assignments, contact lifecycle type, messages |
 | **Must never change** | Scoring prompt/contract, onboarding state, public intake form behavior, model configuration |
 
