@@ -116,11 +116,26 @@ function extractInvoiceSubscriptionId(invoice: Stripe.Invoice): string | undefin
 }
 
 /**
- * Apply a subscription state update to the matching Brokerage row.
- * Caller must have already determined that subscription.metadata.brokerageId is set.
- * Returns true if a brokerage was updated (and thus Space path should be skipped),
- * false if the brokerage row no longer exists (idempotency: orphaned subscription).
+ * Stripe delivers `customer` as an id string by default, but an expanded
+ * Customer object if the event (or a retrieve) used `expand`. Comparing the
+ * raw value to a stored id then fails closed — a paying team's webhook is
+ * rejected as "metadata poisoning" and they stay locked out.
  */
+function stripeCustomerId(
+  customer: string | Stripe.Customer | Stripe.DeletedCustomer | null | undefined,
+): string | null {
+  if (!customer) return null;
+  if (typeof customer === 'string') return customer;
+  if (typeof customer === 'object' && typeof customer.id === 'string') return customer.id;
+  return null;
+}
+
+function assertDbWrite(error: { message: string } | null, context: string): void {
+  if (error) {
+    throw new Error(`[stripe-webhook] ${context}: ${error.message}`);
+  }
+}
+
 /**
  * Guard against metadata poisoning. A subscription's `metadata.brokerageId`
  * is untrusted — whoever created the sub could point it at any brokerage.
@@ -158,11 +173,7 @@ async function verifyBrokerageOwnsSubscription(
     return { status: 'missing', existing: null };
   }
 
-  const webhookCustomer =
-    customerOverride ??
-    (typeof subscription.customer === 'string'
-      ? subscription.customer
-      : subscription.customer?.id ?? null);
+  const webhookCustomer = customerOverride ?? stripeCustomerId(subscription.customer);
 
   if (
     existing.stripeCustomerId &&
@@ -187,6 +198,67 @@ async function verifyBrokerageOwnsSubscription(
   };
 }
 
+type SpaceGuardRow = {
+  id: string;
+  stripeCustomerId: string | null;
+  trialUsedAt: string | null;
+};
+
+async function verifySpaceOwnsSubscription(
+  spaceId: string,
+  subscription: Stripe.Subscription,
+  customerOverride?: string | null,
+): Promise<{ status: 'ok' | 'missing' | 'mismatch'; existing: SpaceGuardRow | null }> {
+  const { data: existing } = await supabase
+    .from('Space')
+    .select('id, stripeCustomerId, trialUsedAt')
+    .eq('id', spaceId)
+    .maybeSingle();
+
+  if (!existing) {
+    logger.warn('[stripe-webhook] subscription references missing space — ignoring', {
+      spaceId,
+      subscriptionId: subscription.id,
+    });
+    return { status: 'missing', existing: null };
+  }
+
+  const webhookCustomer = customerOverride ?? stripeCustomerId(subscription.customer);
+
+  if (
+    existing.stripeCustomerId &&
+    webhookCustomer &&
+    existing.stripeCustomerId !== webhookCustomer
+  ) {
+    logger.error(
+      '[stripe-webhook] spaceId metadata mismatch — space belongs to different customer',
+      {
+        spaceId,
+        spaceCustomer: existing.stripeCustomerId,
+        webhookCustomer,
+        subscriptionId: subscription.id,
+      },
+    );
+    return {
+      status: 'mismatch',
+      existing: {
+        id: existing.id,
+        stripeCustomerId: existing.stripeCustomerId,
+        trialUsedAt: existing.trialUsedAt ?? null,
+      },
+    };
+  }
+
+  return {
+    status: 'ok',
+    existing: {
+      id: existing.id,
+      stripeCustomerId: existing.stripeCustomerId ?? null,
+      trialUsedAt: existing.trialUsedAt ?? null,
+    },
+  };
+}
+
 async function updateBrokerageFromSubscription(
   brokerageId: string,
   subscription: Stripe.Subscription,
@@ -202,11 +274,7 @@ async function updateBrokerageFromSubscription(
   // Guard returned 'ok'; existing is populated.
   const existing = guard.existing!;
 
-  const webhookCustomer =
-    opts.customerId ??
-    (typeof subscription.customer === 'string'
-      ? subscription.customer
-      : subscription.customer?.id ?? null);
+  const webhookCustomer = opts.customerId ?? stripeCustomerId(subscription.customer);
 
   const updateData: Record<string, unknown> = {
     stripeSubscriptionId: subscription.id,
@@ -231,15 +299,84 @@ async function updateBrokerageFromSubscription(
     .update(updateData)
     .eq('id', brokerageId);
 
-  if (error) {
-    logger.error('[stripe-webhook] failed to update Brokerage', {
-      brokerageId,
-      subscriptionId: subscription.id,
-      dbError: error.message,
-    });
+  assertDbWrite(error, `failed to update Brokerage ${brokerageId}`);
+  return true;
+}
+
+/**
+ * Persist the full entitlement row on Space. The previous Space path wrote
+ * only status + period end on `customer.subscription.updated` /
+ * `invoice.payment_succeeded`. If `checkout.session.completed` never stored
+ * `stripeSubscriptionId`, later revoke events keyed on that id hit 0 rows
+ * and a canceled or past-due team kept paid access.
+ */
+async function updateSpaceFromSubscription(
+  spaceId: string,
+  subscription: Stripe.Subscription,
+  opts: { customerId?: string | null; recordTrial?: boolean } = {},
+): Promise<'ok' | 'missing' | 'mismatch'> {
+  const guard = await verifySpaceOwnsSubscription(spaceId, subscription, opts.customerId);
+  if (guard.status !== 'ok') return guard.status;
+  const existing = guard.existing!;
+
+  const webhookCustomer = opts.customerId ?? stripeCustomerId(subscription.customer);
+  const updateData: Record<string, unknown> = {
+    stripeSubscriptionId: subscription.id,
+    stripeSubscriptionStatus: mapStatus(subscription.status),
+    stripePeriodEnd: getPeriodEnd(subscription),
+  };
+
+  if (webhookCustomer && !existing.stripeCustomerId) {
+    updateData.stripeCustomerId = webhookCustomer;
   }
 
-  return true;
+  if (opts.recordTrial && subscription.status === 'trialing' && !existing.trialUsedAt) {
+    updateData.trialUsedAt = new Date().toISOString();
+  }
+
+  const { error } = await supabase
+    .from('Space')
+    .update(updateData)
+    .eq('id', spaceId);
+
+  assertDbWrite(error, `failed to update Space ${spaceId}`);
+  return 'ok';
+}
+
+async function revokeSpaceBySubscriptionId(
+  subscriptionId: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const { error } = await supabase
+    .from('Space')
+    .update(payload)
+    .eq('stripeSubscriptionId', subscriptionId);
+  assertDbWrite(error, `failed to update Space by subscription ${subscriptionId}`);
+}
+
+/**
+ * Revoke or dunning-mark a Space. Prefer metadata.spaceId (with the
+ * customer guard) so we still hit the row when checkout never persisted
+ * `stripeSubscriptionId`. On poison, fall through to the subscription id
+ * so the attacker's own row still loses access.
+ */
+async function revokeSpaceFromSubscription(
+  subscription: Stripe.Subscription,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const spaceId = subscription.metadata?.spaceId;
+  if (spaceId) {
+    const guard = await verifySpaceOwnsSubscription(spaceId, subscription);
+    if (guard.status === 'ok') {
+      const { error } = await supabase
+        .from('Space')
+        .update(payload)
+        .eq('id', spaceId);
+      assertDbWrite(error, `failed to revoke Space ${spaceId}`);
+      return;
+    }
+  }
+  await revokeSpaceBySubscriptionId(subscription.id, payload);
 }
 
 export async function POST(req: NextRequest) {
@@ -292,55 +429,19 @@ export async function POST(req: NextRequest) {
           session.metadata?.brokerageId ?? subscription.metadata?.brokerageId;
         if (brokerageId) {
           await updateBrokerageFromSubscription(brokerageId, subscription, {
-            customerId: session.customer as string,
+            customerId: stripeCustomerId(session.customer),
             includePlanFromMetadata: true,
           });
           break;
         }
 
-        // ── Existing Space path (unchanged) ──────────────────────────────
-        const spaceId = session.metadata?.spaceId;
+        const spaceId = session.metadata?.spaceId ?? subscription.metadata?.spaceId;
         if (!spaceId) break;
 
-        const updateData: Record<string, unknown> = {
-          stripeCustomerId: session.customer as string,
-          stripeSubscriptionId: subscription.id,
-          stripeSubscriptionStatus: mapStatus(subscription.status),
-          stripePeriodEnd: getPeriodEnd(subscription),
-        };
-
-        // Track trial usage — only set once, never reset
-        if (subscription.status === 'trialing') {
-          const { data: existing } = await supabase
-            .from('Space')
-            .select('trialUsedAt')
-            .eq('id', spaceId)
-            .maybeSingle();
-          if (!existing?.trialUsedAt) {
-            updateData.trialUsedAt = new Date().toISOString();
-          }
-        }
-
-        // Validate spaceId ownership before updating
-        const { data: targetSpace } = await supabase
-          .from('Space')
-          .select('stripeCustomerId')
-          .eq('id', spaceId)
-          .maybeSingle();
-
-        if (targetSpace && targetSpace.stripeCustomerId && targetSpace.stripeCustomerId !== (session.customer as string)) {
-          logger.error('[stripe-webhook] checkout spaceId mismatch — rejecting metadata poisoning attempt', {
-            spaceId,
-            existingCustomer: targetSpace.stripeCustomerId,
-            sessionCustomer: session.customer,
-          });
-          break;
-        }
-
-        await supabase
-          .from('Space')
-          .update(updateData)
-          .eq('id', spaceId);
+        await updateSpaceFromSubscription(spaceId, subscription, {
+          customerId: stripeCustomerId(session.customer),
+          recordTrial: true,
+        });
         break;
       }
 
@@ -357,37 +458,20 @@ export async function POST(req: NextRequest) {
           break;
         }
 
-        // ── Existing Space path (unchanged) ──────────────────────────────
         const spaceId = subscription.metadata?.spaceId;
-        const updateData = {
-          stripeSubscriptionStatus: newStatus,
-          stripePeriodEnd: getPeriodEnd(subscription),
-        };
-
         if (spaceId) {
-          // Validate spaceId ownership: only update if the space's existing customer matches
-          // or if the space has no customer yet (first-time setup)
-          const { data: existingSpace } = await supabase
-            .from('Space')
-            .select('stripeCustomerId')
-            .eq('id', spaceId)
-            .maybeSingle();
-
-          if (existingSpace && existingSpace.stripeCustomerId && existingSpace.stripeCustomerId !== subscription.customer) {
-            logger.error('[stripe-webhook] spaceId metadata mismatch — space belongs to different customer', {
-              spaceId,
-              spaceCustomer: existingSpace.stripeCustomerId,
-              webhookCustomer: subscription.customer,
-            });
-            break; // Reject update — potential metadata poisoning attack
-          }
-
-          await supabase.from('Space').update(updateData).eq('id', spaceId);
+          const result = await updateSpaceFromSubscription(spaceId, subscription);
+          if (result === 'mismatch') break;
         } else {
-          await supabase
+          const { error } = await supabase
             .from('Space')
-            .update(updateData)
+            .update({
+              stripeSubscriptionId: subscription.id,
+              stripeSubscriptionStatus: newStatus,
+              stripePeriodEnd: getPeriodEnd(subscription),
+            })
             .eq('stripeSubscriptionId', subscription.id);
+          assertDbWrite(error, `failed to update Space by subscription ${subscription.id}`);
         }
         // Notify owner of status change
         try { await notifySubscriptionChange(subscription.id, newStatus); } catch (e) { logger.error('[stripe-webhook] subscription notification failed', undefined, e); }
@@ -413,24 +497,14 @@ export async function POST(req: NextRequest) {
               stripePeriodEnd: getPeriodEnd(subscription),
             })
             .eq('id', brokerageId);
-          if (error) {
-            logger.error('[stripe-webhook] failed to mark brokerage canceled', {
-              brokerageId,
-              subscriptionId: subscription.id,
-              dbError: error.message,
-            });
-          }
+          assertDbWrite(error, `failed to mark brokerage canceled ${brokerageId}`);
           break;
         }
 
-        // ── Existing Space path (unchanged) ──────────────────────────────
-        await supabase
-          .from('Space')
-          .update({
-            stripeSubscriptionStatus: 'canceled',
-            stripePeriodEnd: getPeriodEnd(subscription),
-          })
-          .eq('stripeSubscriptionId', subscription.id);
+        await revokeSpaceFromSubscription(subscription, {
+          stripeSubscriptionStatus: 'canceled',
+          stripePeriodEnd: getPeriodEnd(subscription),
+        });
         try { await notifySubscriptionChange(subscription.id, 'canceled'); } catch (e) { logger.error('[stripe-webhook] canceled notification failed', undefined, e); }
         break;
       }
@@ -453,14 +527,27 @@ export async function POST(req: NextRequest) {
           break;
         }
 
-        // ── Existing Space path (unchanged) ──────────────────────────────
-        await supabase
-          .from('Space')
-          .update({
-            stripeSubscriptionStatus: paidStatus,
-            stripePeriodEnd: getPeriodEnd(paidSub),
-          })
-          .eq('stripeSubscriptionId', paidSubId);
+        const spaceId = paidSub.metadata?.spaceId;
+        if (spaceId) {
+          const result = await updateSpaceFromSubscription(spaceId, paidSub);
+          if (result === 'mismatch') {
+            await revokeSpaceBySubscriptionId(paidSubId, {
+              stripeSubscriptionId: paidSub.id,
+              stripeSubscriptionStatus: paidStatus,
+              stripePeriodEnd: getPeriodEnd(paidSub),
+            });
+          }
+        } else {
+          const { error } = await supabase
+            .from('Space')
+            .update({
+              stripeSubscriptionId: paidSub.id,
+              stripeSubscriptionStatus: paidStatus,
+              stripePeriodEnd: getPeriodEnd(paidSub),
+            })
+            .eq('stripeSubscriptionId', paidSubId);
+          assertDbWrite(error, `failed to update Space by subscription ${paidSubId}`);
+        }
 
         // Notify only on active transition (payment recovered past_due subscription)
         if (paidStatus === 'active') {
@@ -499,21 +586,13 @@ export async function POST(req: NextRequest) {
             .from('Brokerage')
             .update({ stripeSubscriptionStatus: 'past_due' })
             .eq('id', brokerageId);
-          if (error) {
-            logger.error('[stripe-webhook] failed to mark brokerage past_due', {
-              brokerageId,
-              subscriptionId: subId,
-              dbError: error.message,
-            });
-          }
+          assertDbWrite(error, `failed to mark brokerage past_due ${brokerageId}`);
           break;
         }
 
-        // ── Existing Space path (unchanged) ──────────────────────────────
-        await supabase
-          .from('Space')
-          .update({ stripeSubscriptionStatus: 'past_due' })
-          .eq('stripeSubscriptionId', subId);
+        await revokeSpaceFromSubscription(failedSub, {
+          stripeSubscriptionStatus: 'past_due',
+        });
         try { await notifySubscriptionChange(subId, 'past_due'); } catch (e) { logger.error('[stripe-webhook] past_due notification failed', undefined, e); }
         break;
       }
@@ -524,6 +603,14 @@ export async function POST(req: NextRequest) {
     }
   } catch (err) {
     logger.error('[stripe-webhook] error processing event', { eventType: event.type }, err);
+    // Release the idempotency claim so Stripe's retry can still grant or
+    // revoke. Claiming before the handler ran meant a 500 locked payers out
+    // for 24h and left canceled teams on active.
+    try {
+      await redis.del(eventKey);
+    } catch {
+      // best effort — Stripe will retry either way
+    }
     return NextResponse.json({ error: 'Webhook handler failed' }, { status: 500 });
   }
 
