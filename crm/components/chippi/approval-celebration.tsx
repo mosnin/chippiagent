@@ -1,23 +1,10 @@
 'use client';
 
 /**
- * The one Chippi-voiced sentence the realtor sees AFTER an approval lands.
+ * One Chippi-voiced sentence after work already happened.
  *
- * Three surfaces consume this — the morning home's MorningActionSheet, the
- * agent drafts inbox, and the chat permission prompt. They all hand in a
- * `kind` (and an optional `subject` for the two kinds whose sentence names
- * the person/date) and let the component own the dwell + dismiss.
- *
- * Sweat-the-detail notes:
- * - 2.5s dwell. 2s reads rushed; 3s reads sluggish. The realtor needs ~2.5
- *   seconds to read four to seven words and feel that someone-is-here pause
- *   before the surface gets out of the way.
- * - text-foreground for the dwell window — this is the ONE moment, not a
- *   footnote. The fade-out collapses the height to 0 so the surrounding
- *   layout reflows cleanly.
- * - No icons. No checkmark. The sentence IS the celebration.
- * - Tasteful 4px slide-in from the left as the line appears — Chippi
- *   pausing to look the realtor in the eye, not a slot machine spin.
+ * This is not an approval gate. Morning home, the drafts inbox, and chat
+ * call this after Chippi acts. There is no human wait in this file.
  */
 import { useEffect } from 'react';
 import { motion } from 'framer-motion';
@@ -41,15 +28,13 @@ export interface ApprovalCelebrationProps {
   onDone?: () => void;
 }
 
-/** How long the sentence stays loud before the height collapses. */
+/** How long the sentence stays visible before the height collapses. */
 export const APPROVAL_DWELL_MS = 2500;
 
 /**
- * Pull the subject (person name / formatted date) the celebration sentence
- * should weave in. The chat permission prompt only carries raw arg ids on
- * `args`, so we fall back to `null` when nothing useful is there — the
- * celebration component then renders the subject-less variant of the
- * sentence, which is intentional (still calm, still in voice).
+ * Pull the subject (person name / formatted date) the completion sentence
+ * should weave in. Chat only carries raw arg ids on `args`, so we fall
+ * back to `null` when nothing useful is there.
  */
 export function approvalSubjectFromArgs(
   toolName: string,
@@ -59,19 +44,12 @@ export function approvalSubjectFromArgs(
     const w = args.when;
     return typeof w === 'string' && w.trim().length > 0 ? w.trim() : undefined;
   }
-  // For mark_person_hot/cold the args only carry an id — no name. Leave it
-  // empty; the celebration falls back to the subject-less direction line.
   return undefined;
 }
 
 /**
- * Map an agent tool name (the chat permission prompt's `prompt.name`) to the
- * approval kind it should celebrate as. Returns `null` for tools whose
- * approval doesn't warrant a celebration line — find/list/lookup tools, the
- * draft_* tools (which compose but don't deliver), researcher subagents, etc.
- *
- * Centralised here so the chat, the morning sheet, and the drafts inbox
- * all draw from one taste-decision file.
+ * Map an agent tool name to the completion kind it should speak as.
+ * Returns `null` for tools that do not warrant a line.
  */
 export function approvalKindForTool(toolName: string): ApprovalKind | null {
   switch (toolName) {
@@ -104,22 +82,8 @@ export function approvalKindForTool(toolName: string): ApprovalKind | null {
 }
 
 /**
- * Pure mapping from action kind to the sentence the realtor sees.
- *
- * Decisions worth defending:
- * - The two-thought rhythm ("Sent. I'll watch for a reply.") — the first
- *   word names what just happened; the second sentence names what Chippi
- *   does next. Two short thoughts, one continuous breath.
- * - `person-hot` / `person-cold` name the direction the realtor just fired.
- *   The realtor already knows which verb they tapped; the celebration
- *   echoes it back so they're sure it landed. "Got it. Sam's hot now." is
- *   confidence; "where they should be" is friendly-vague.
- * - `stage` says "the board" not "the pipeline" — the realtor's word for
- *   the kanban surface they actually look at.
- *
- * Exported for tests + so a consumer can render the same string elsewhere
- * if they need to log it. Safe with bad input — falls back to a generic
- * "Done." so an unknown kind still reads calm rather than crashing.
+ * Pure mapping from action kind to the sentence the realtor sees after
+ * Chippi already did the work. Not a prompt. Not a wait.
  */
 export function getApprovalSentence(kind: ApprovalKind, subject?: string): string {
   switch (kind) {
@@ -163,8 +127,6 @@ export function ApprovalCelebration({ kind, subject, onDone }: ApprovalCelebrati
 
   return (
     <motion.p
-      // Height-collapse on exit so the surface above (composer, drafts list,
-      // chat prompt) reflows without a stray empty box. Width stays auto.
       initial={{ opacity: 0, x: -4, height: 'auto' }}
       animate={{
         opacity: 1,
