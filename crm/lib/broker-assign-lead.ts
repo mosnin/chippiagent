@@ -56,6 +56,22 @@ export async function assignLeadToRealtor(params: {
     return { ok: false, error: 'Contact not found in your brokerage space', status: 404 };
   }
 
+  // A contact whose brokerageId is already set must belong to THIS brokerage.
+  // The space-first lookup above is the legacy pool path and does not filter
+  // on brokerageId — without this check a dual-brokerage owner's workspace
+  // could hand another firm's lead to this firm's realtor.
+  if (contact.brokerageId && contact.brokerageId !== brokerage.id) {
+    return { ok: false, error: 'Contact not found in your brokerage space', status: 404 };
+  }
+
+  // Auto-routed intake inserts the lead directly into a realtor workspace
+  // (brokerageId set, no 'assigned' tag). Cloning that row would dual-home
+  // the same person in two agents' spaces — the original stays with agent A,
+  // the clone lands with agent B. Refuse; the lead is already placed.
+  if (contact.spaceId && contact.spaceId !== brokerSpace.id) {
+    return { ok: false, error: 'This lead is already in a realtor workspace', status: 409 };
+  }
+
   // ── Verify the realtor is a member of this brokerage ───────────────────
   const { data: realtorMembership, error: memberError } = await supabase
     .from('BrokerageMembership')
@@ -69,9 +85,21 @@ export async function assignLeadToRealtor(params: {
   }
 
   // ── Find the realtor's space ───────────────────────────────────────────
+  // Space.ownerId is unique (one workspace per user). Join-code overwrites
+  // Space.brokerageId, so a dual-brokerage realtor's workspace may now
+  // belong to a different firm. Routing already requires
+  // Space.brokerageId = this brokerage; assign must do the same or the
+  // clone lands in the other firm's workspace.
   const realtorSpace = await getSpaceByOwnerId(realtorUserId);
   if (!realtorSpace) {
     return { ok: false, error: 'Member does not have a workspace yet', status: 404 };
+  }
+  if (realtorSpace.brokerageId && realtorSpace.brokerageId !== brokerage.id) {
+    return {
+      ok: false,
+      error: 'Member workspace is linked to another brokerage',
+      status: 409,
+    };
   }
 
   // ── Fetch the realtor's name ───────────────────────────────────────────
@@ -95,6 +123,7 @@ export async function assignLeadToRealtor(params: {
   const { error: cloneError } = await supabase.from('Contact').insert({
     id: newContactId,
     spaceId: realtorSpace.id,
+    brokerageId: brokerage.id,
     name: contact.name,
     email: contact.email,
     phone: contact.phone,
