@@ -60,7 +60,10 @@ vi.mock('@/lib/vectorize', () => ({
 }));
 
 const { sendSMSMock } = vi.hoisted(() => ({ sendSMSMock: vi.fn(async () => true) }));
-vi.mock('@/lib/sms', () => ({ sendSMS: sendSMSMock }));
+vi.mock('@/lib/sms', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/sms')>('@/lib/sms');
+  return { ...actual, sendSMS: sendSMSMock };
+});
 
 const { notifyNewDealMock } = vi.hoisted(() => ({ notifyNewDealMock: vi.fn(async () => undefined) }));
 vi.mock('@/lib/notify', () => ({ notifyNewDeal: notifyNewDealMock }));
@@ -258,6 +261,78 @@ describe('sendSmsTool', () => {
     );
     expect(result.display).toBe('error');
     expect(result.summary).toMatch(/SMS send failed/);
+  });
+
+  it('refuses when contactId and toPhone canonicalize to different numbers', async () => {
+    mockByTable = {
+      Contact: { single: { id: 'c_1', name: 'Jane', phone: '+14155550123' } },
+    };
+    const result = await sendSmsTool.handler(
+      { contactId: 'c_1', toPhone: '+14155550999', body: 'hi' },
+      makeCtx(),
+    );
+    expect(sendSMSMock).not.toHaveBeenCalled();
+    expect(result.display).toBe('error');
+    expect(result.summary).toMatch(/do not match/);
+  });
+
+  it('sends when contactId and toPhone are the same number in different formats', async () => {
+    mockByTable = {
+      Contact: { single: { id: 'c_1', name: 'Jane', phone: '14155550123' } },
+    };
+    const result = await sendSmsTool.handler(
+      { contactId: 'c_1', toPhone: '+14155550123', body: 'same number' },
+      makeCtx(),
+    );
+    expect(sendSMSMock).toHaveBeenCalledTimes(1);
+    expect((sendSMSMock.mock.calls as unknown[][])[0][0]).toMatchObject({ to: '+14155550123' });
+    expect(result.display).toBe('success');
+  });
+
+  it('uses toPhone when the contact has no phone on file', async () => {
+    mockByTable = {
+      Contact: { single: { id: 'c_2', name: 'Phoneless', phone: null } },
+    };
+    const result = await sendSmsTool.handler(
+      { contactId: 'c_2', toPhone: '+14155550123', body: 'hi' },
+      makeCtx(),
+    );
+    expect(sendSMSMock).toHaveBeenCalledTimes(1);
+    expect((sendSMSMock.mock.calls as unknown[][])[0][0]).toMatchObject({ to: '+14155550123' });
+    expect(result.display).toBe('success');
+  });
+
+  it('retries after a failed send instead of caching the failure', async () => {
+    mockByTable = { Contact: { single: null } };
+    sendSMSMock.mockResolvedValueOnce(false);
+    const first = await sendSmsTool.handler(
+      { toPhone: '+14155550888', body: 'retry-me' },
+      makeCtx(),
+    );
+    expect(first.display).toBe('error');
+
+    sendSMSMock.mockResolvedValueOnce(true);
+    const second = await sendSmsTool.handler(
+      { toPhone: '+14155550888', body: 'retry-me' },
+      makeCtx(),
+    );
+    expect(sendSMSMock).toHaveBeenCalledTimes(2);
+    expect(second.display).toBe('success');
+  });
+
+  it('does not resend an identical successful message within the idempotency window', async () => {
+    mockByTable = { Contact: { single: null } };
+    const first = await sendSmsTool.handler(
+      { toPhone: '+14155550777', body: 'once-only' },
+      makeCtx(),
+    );
+    const second = await sendSmsTool.handler(
+      { toPhone: '+14155550777', body: 'once-only' },
+      makeCtx(),
+    );
+    expect(sendSMSMock).toHaveBeenCalledTimes(1);
+    expect(first.display).toBe('success');
+    expect(second.display).toBe('success');
   });
 });
 

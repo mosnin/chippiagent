@@ -4,10 +4,15 @@
  * Approval-gated. SMS is more intrusive than email (it dings the lead's
  * phone), so the user ALWAYS sees the body + recipient before we send.
  *
- * Recipient resolution mirrors send_email:
+ * Recipient resolution:
  *   1. contactId provided → use that contact's `phone`.
  *   2. toPhone provided   → send to the bare number (optionally matched
  *      back to a Contact for the audit trail).
+ *   3. both provided      → they must canonicalize to the same E.164
+ *      number. A mismatch is refused (the approval UI shows toPhone
+ *      while the handler used to prefer contact.phone).
+ *   4. contactId with no phone + toPhone → send to toPhone (do not
+ *      fail-closed when a valid destination was supplied).
  *
  * The underlying sendSMS helper validates E.164 + blocks premium-rate
  * numbers + swallows its own errors — it returns `false` on failure
@@ -18,10 +23,10 @@
 import crypto from 'crypto';
 import { z } from 'zod';
 import { supabase } from '@/lib/supabase';
-import { sendSMS } from '@/lib/sms';
+import { sendSMS, toE164 } from '@/lib/sms';
 import { logger } from '@/lib/logger';
 import { defineTool } from '../types';
-import { makeIdempotencyKey, withIdempotency } from '@/lib/agent/ts-idempotency';
+import { checkIdempotency, makeIdempotencyKey, storeIdempotency } from '@/lib/agent/ts-idempotency';
 import { getPublicUrl } from '@/lib/storage';
 
 /** Telnyx MMS hard limits: keep media count ≤ 5 and total ≤ 1 MB to
@@ -104,14 +109,29 @@ export const sendSmsTool = defineTool<typeof parameters, SendSMSResult>({
           display: 'error',
         };
       }
-      if (!contact.phone) {
+      const contactPhone = typeof contact.phone === 'string' ? contact.phone : '';
+      if (args.toPhone && contactPhone) {
+        const contactE164 = toE164(contactPhone);
+        const toPhoneE164 = toE164(args.toPhone);
+        if (!contactE164 || !toPhoneE164 || contactE164 !== toPhoneE164) {
+          return {
+            summary:
+              'Contact phone and toPhone do not match — refusing to send to the wrong number.',
+            display: 'error',
+          };
+        }
+        resolvedPhone = contactE164;
+      } else if (contactPhone) {
+        resolvedPhone = contactPhone;
+      } else if (args.toPhone) {
+        resolvedPhone = args.toPhone;
+      } else {
         return {
           summary: `${contact.name} has no phone number on file — add one before sending.`,
           display: 'error',
         };
       }
       resolvedContactId = contact.id;
-      resolvedPhone = contact.phone;
     } else if (args.toPhone) {
       resolvedPhone = args.toPhone;
       // Best-effort link back to a matching Contact for the audit trail.
@@ -128,6 +148,15 @@ export const sendSmsTool = defineTool<typeof parameters, SendSMSResult>({
     if (!resolvedPhone) {
       return { summary: 'Could not resolve a recipient phone number.', display: 'error' };
     }
+
+    const canonicalPhone = toE164(resolvedPhone);
+    if (!canonicalPhone) {
+      return {
+        summary: `SMS send failed for ${resolvedPhone}. Number is not a valid destination.`,
+        display: 'error',
+      };
+    }
+    resolvedPhone = canonicalPhone;
 
     // Resolve MMS media: each File must be public (we serve via signed
     // URLs by default, but Telnyx fetches the URL itself from carrier
@@ -175,16 +204,28 @@ export const sendSmsTool = defineTool<typeof parameters, SendSMSResult>({
     // number, premium prefix, provider error). Distinguish between "we
     // didn't send" vs "provider accepted but silently dropped" isn't
     // possible here — treat false as a delivery failure.
+    // Cache only a successful send. Caching `false` would fail-closed on
+    // retry and block a later successful delivery of the same message.
     const idemKey = makeIdempotencyKey('send_sms', ctx.space.id, resolvedPhone, args.body);
-    const ok = await withIdempotency(idemKey, () =>
-      sendSMS({ to: resolvedPhone!, body: args.body, mediaUrls }),
-    );
+    if (checkIdempotency(idemKey) === true) {
+      return {
+        summary: `SMS sent to ${resolvedPhone}.`,
+        data: {
+          deliveredTo: resolvedPhone,
+          contactId: resolvedContactId,
+          bodyLength: args.body.length,
+        },
+        display: 'success',
+      };
+    }
+    const ok = await sendSMS({ to: resolvedPhone, body: args.body, mediaUrls });
     if (!ok) {
       return {
         summary: `SMS send failed for ${resolvedPhone}. Check the number, Telnyx credentials, or provider logs.`,
         display: 'error',
       };
     }
+    storeIdempotency(idemKey, true);
 
     // Audit the send on the Contact's activity feed when linked. The
     // ContactActivity.type enum doesn't include an 'sms' value, so we log

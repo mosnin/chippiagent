@@ -536,3 +536,145 @@ class TestWebhookSignatureEnforcement:
         request = self._mock_request(body, headers={"X-Twilio-Signature": sig})
         resp = await adapter._handle_webhook(request)
         assert resp.status == 200
+
+
+# ── E.164 destination + send result ────────────────────────────────────
+
+class TestToE164:
+    def test_does_not_double_prefix_11_digit_us_number(self):
+        from gateway.platforms.sms import to_e164
+
+        assert to_e164("15551234567") == "+15551234567"
+        assert to_e164("1-555-123-4567") == "+15551234567"
+        assert to_e164("15551234567") != "+115551234567"
+
+    def test_prefixes_10_digit_us_number(self):
+        from gateway.platforms.sms import to_e164
+
+        assert to_e164("5551234567") == "+15551234567"
+        assert to_e164("(555) 123-4567") == "+15551234567"
+
+    def test_keeps_valid_e164(self):
+        from gateway.platforms.sms import to_e164
+
+        assert to_e164("+15551234567") == "+15551234567"
+        assert to_e164("+44 7911 123456") == "+447911123456"
+
+    def test_refuses_international_without_plus(self):
+        from gateway.platforms.sms import to_e164
+
+        assert to_e164("447911123456") is None
+        assert to_e164("0015551234567") is None
+
+    def test_refuses_short_or_empty(self):
+        from gateway.platforms.sms import to_e164
+
+        assert to_e164("") is None
+        assert to_e164("12345") is None
+
+
+class TestTwilioAcceptedSend:
+    def test_requires_sid_and_rejects_failed_status(self):
+        from gateway.platforms.sms import twilio_accepted_send
+
+        assert twilio_accepted_send({"sid": "SM123", "status": "queued"}) is True
+        assert twilio_accepted_send({"sid": "SM123", "status": "sent"}) is True
+        assert twilio_accepted_send({"status": "queued"}) is False
+        assert twilio_accepted_send({"sid": "", "status": "queued"}) is False
+        assert twilio_accepted_send({"sid": "SM123", "status": "failed"}) is False
+        assert twilio_accepted_send({"sid": "SM123", "error_code": 21211}) is False
+        assert twilio_accepted_send({}) is False
+        assert twilio_accepted_send(None) is False
+
+
+class _FakeResp:
+    def __init__(self, status, body):
+        self.status = status
+        self._body = body
+
+    async def json(self):
+        return self._body
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+
+class _FakeSession:
+    def __init__(self, status=201, body=None):
+        self.status = status
+        self.body = body if body is not None else {"sid": "SM123", "status": "queued"}
+        self.posts = []
+
+    def post(self, url, data=None, headers=None):
+        fields = getattr(data, "fields", None)
+        if fields is None and hasattr(data, "_fields"):
+            fields = {item[0]["name"]: item[2] for item in data._fields}
+        self.posts.append({"url": url, "fields": fields or {}, "headers": headers})
+        return _FakeResp(self.status, self.body)
+
+
+class _RecordingFormData:
+    def __init__(self, *args, **kwargs):
+        self.fields = {}
+
+    def add_field(self, name, value):
+        self.fields[name] = value
+
+
+class TestSmsSend:
+    def _make_adapter(self):
+        from gateway.platforms.sms import SmsAdapter
+
+        env = {
+            "TWILIO_ACCOUNT_SID": "ACtest",
+            "TWILIO_AUTH_TOKEN": "tok",
+            "TWILIO_PHONE_NUMBER": "+15550001111",
+        }
+        with patch.dict(os.environ, env):
+            pc = PlatformConfig(enabled=True, api_key="tok")
+            adapter = SmsAdapter(pc)
+        return adapter
+
+    @pytest.mark.asyncio
+    async def test_send_normalizes_11_digit_us_to(self):
+        adapter = self._make_adapter()
+        session = _FakeSession()
+        adapter._http_session = session
+        with patch("aiohttp.FormData", _RecordingFormData):
+            result = await adapter.send("15551234567", "hello")
+        assert result.success is True
+        assert session.posts[0]["fields"]["To"] == "+15551234567"
+        assert session.posts[0]["fields"]["To"] != "+115551234567"
+
+    @pytest.mark.asyncio
+    async def test_send_refuses_invalid_to(self):
+        adapter = self._make_adapter()
+        session = _FakeSession()
+        adapter._http_session = session
+        result = await adapter.send("12345", "hello")
+        assert result.success is False
+        assert session.posts == []
+
+    @pytest.mark.asyncio
+    async def test_send_2xx_without_sid_is_not_marked_sent(self):
+        adapter = self._make_adapter()
+        session = _FakeSession(status=201, body={"status": "queued"})
+        adapter._http_session = session
+        with patch("aiohttp.FormData", _RecordingFormData):
+            result = await adapter.send("+15551234567", "hello")
+        assert result.success is False
+
+    @pytest.mark.asyncio
+    async def test_send_2xx_with_error_code_is_not_marked_sent(self):
+        adapter = self._make_adapter()
+        session = _FakeSession(
+            status=201,
+            body={"sid": "SM123", "status": "failed", "error_code": 21211},
+        )
+        adapter._http_session = session
+        with patch("aiohttp.FormData", _RecordingFormData):
+            result = await adapter.send("+15551234567", "hello")
+        assert result.success is False

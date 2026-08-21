@@ -48,6 +48,51 @@ export interface SendSMSParams {
   mediaUrls?: string[];
 }
 
+const E164_RE = /^\+\d{10,15}$/;
+const PREMIUM_PREFIXES = ['+1900', '+1976', '+44870', '+44871', '+44872', '+44090', '+44091'];
+
+/**
+ * Canonicalize a stored or typed phone number to E.164.
+ *
+ * US numbers are often saved as `5551234567` or `15551234567` (no plus).
+ * Blindly prefixing `+1` turns the 11-digit form into `+115551234567` and
+ * the message goes to the wrong destination. International numbers without
+ * a leading `+` are refused — guessing a country code is worse than failing.
+ * Returns null when the input cannot be a valid destination.
+ */
+export function toE164(raw: string): string | null {
+  const text = raw.trim();
+  if (!text) return null;
+
+  const hasPlus = text.startsWith('+');
+  const digits = text.replace(/\D/g, '');
+  if (digits.length < 10 || digits.length > 15) return null;
+
+  let e164: string;
+  if (hasPlus) {
+    e164 = `+${digits}`;
+  } else if (digits.length === 10) {
+    e164 = `+1${digits}`;
+  } else if (digits.length === 11 && digits.startsWith('1')) {
+    e164 = `+${digits}`;
+  } else {
+    return null;
+  }
+
+  return E164_RE.test(e164) ? e164 : null;
+}
+
+/** True only when Telnyx returned a message id — HTTP success without an id is not a send. */
+export function telnyxAcceptedSend(response: unknown): boolean {
+  if (!response || typeof response !== 'object') return false;
+  const rec = response as Record<string, unknown>;
+  const data = rec.data;
+  const fromData =
+    data && typeof data === 'object' ? (data as Record<string, unknown>).id : undefined;
+  const id = fromData ?? rec.id;
+  return typeof id === 'string' && id.length > 0;
+}
+
 /**
  * Send an SMS via Telnyx. Returns true if sent, false if skipped/failed.
  * Never throws — errors are logged and swallowed.
@@ -65,25 +110,13 @@ export async function sendSMS(params: SendSMSParams): Promise<boolean> {
     return false;
   }
 
-  // Basic phone validation — must look like a phone number
-  const cleaned = params.to.replace(/[^\d+]/g, '');
-  if (cleaned.length < 10) {
-    logger.warn('[sms] invalid phone number (too short)', { to: params.to });
+  const toNumber = toE164(params.to);
+  if (!toNumber) {
+    logger.warn('[sms] phone number not valid E.164', { to: params.to });
     return false;
   }
 
-  // Ensure E.164 format
-  const toNumber = cleaned.startsWith('+') ? cleaned : `+1${cleaned}`;
-
-  // Validate E.164 format: + followed by 10-15 digits
-  if (!/^\+\d{10,15}$/.test(toNumber)) {
-    logger.warn('[sms] phone number not valid E.164', { to: toNumber });
-    return false;
-  }
-
-  // Block premium-rate numbers to prevent toll fraud
-  const premiumPrefixes = ['+1900', '+1976', '+44870', '+44871', '+44872', '+44090', '+44091'];
-  if (premiumPrefixes.some((prefix) => toNumber.startsWith(prefix))) {
+  if (PREMIUM_PREFIXES.some((prefix) => toNumber.startsWith(prefix))) {
     logger.warn('[sms] blocked premium-rate number', { to: toNumber });
     return false;
   }
@@ -99,9 +132,18 @@ export async function sendSMS(params: SendSMSParams): Promise<boolean> {
       // responsible for making sure the URLs resolve without auth.
       ...(hasMedia ? { media_urls: params.mediaUrls } : {}),
     });
+    if (!telnyxAcceptedSend(response)) {
+      logger.error('[sms] provider returned no message id — not marking sent', {
+        to: toNumber,
+      });
+      return false;
+    }
+    const messageId =
+      (response as { data?: { id?: string }; id?: string })?.data?.id ??
+      (response as { id?: string }).id;
     logger.info('[sms] sent', {
       to: toNumber,
-      messageId: response?.data?.id ?? 'unknown',
+      messageId,
       bodyLength: params.body.length,
       mediaCount: hasMedia ? params.mediaUrls!.length : 0,
     });
