@@ -1,9 +1,8 @@
 /**
  * `move_deal_stage` — move a Deal to a new DealStage.
  *
- * Approval-gated: stage moves are high-signal in the pipeline view
- * (the kanban card physically jumps), so the realtor wants a clear
- * "yes that's the move I meant" confirmation.
+ * Autonomous: stage moves fire `deal_stage_changed` and send now. No
+ * approval queue, no pending draft.
  *
  * Intentionally narrow in scope. This tool does NOT:
  *   - change the deal's status (active/won/lost)
@@ -15,6 +14,7 @@
  *   - update the row + updatedAt
  *   - log a DealActivity of type 'stage_change' with old→new names
  *   - reindex search via syncDeal
+ *   - fire deal_stage_changed and send without a human queue
  */
 
 import crypto from 'crypto';
@@ -22,6 +22,9 @@ import { z } from 'zod';
 import { supabase } from '@/lib/supabase';
 import { syncDeal } from '@/lib/vectorize';
 import { logger } from '@/lib/logger';
+import { fireAgentTrigger } from '@/lib/agent/fire-trigger';
+import { firstNameOf } from '@/lib/agent/first-touch';
+import { sendSMS } from '@/lib/sms';
 import { defineTool } from '../types';
 
 const parameters = z
@@ -43,9 +46,9 @@ export const moveDealStageTool = defineTool<typeof parameters, MoveDealStageResu
   name: 'move_deal_stage',
   riskLevel: 'low',
   description:
-    'Move a deal to a different pipeline stage. Prompts for approval first.',
+    'Move a deal to a different pipeline stage. Fires deal_stage_changed and sends without waiting for approval.',
   parameters,
-  requiresApproval: true,
+  requiresApproval: false,
   rateLimit: { max: 60, windowSeconds: 3600 },
   summariseCall(args) {
     return `Move deal ${args.dealId.slice(0, 8)} → stage ${args.stageId.slice(0, 8)}`;
@@ -142,6 +145,12 @@ export const moveDealStageTool = defineTool<typeof parameters, MoveDealStageResu
       );
     }
 
+    await fireAndSendDealStageChanged({
+      spaceId: ctx.space.id,
+      dealId: args.dealId,
+      stageName: newStage.name,
+    });
+
     return {
       summary: `Moved "${deal.title}" → "${newStage.name}".`,
       data: {
@@ -155,3 +164,94 @@ export const moveDealStageTool = defineTool<typeof parameters, MoveDealStageResu
     };
   },
 });
+
+export function composeDealStageChangedSms(
+  contactName: string,
+  stageName: string,
+  agentFirstName: string,
+): string {
+  const lead = firstNameOf(contactName, 'there');
+  const who = firstNameOf(agentFirstName, 'I') || 'I';
+  const stage = stageName.trim() || 'the next stage';
+  const content = `Hey ${lead}, this is ${who}. Now in ${stage}. Want to talk next steps?`
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (/\bchippy\b/i.test(content)) {
+    throw new Error('deal-stage SMS used the wrong brand spelling');
+  }
+  return content;
+}
+
+/** Fire deal_stage_changed and send now. Never inserts a pending draft. */
+export async function fireAndSendDealStageChanged(input: {
+  spaceId: string;
+  dealId: string;
+  stageName: string;
+  contactId?: string;
+}): Promise<void> {
+  try {
+    await fireAgentTrigger({
+      spaceId: input.spaceId,
+      event: 'deal_stage_changed',
+      dealId: input.dealId,
+      contactId: input.contactId,
+    });
+  } catch (e) {
+    logger.error('[tools.move_deal_stage] agent trigger failed', { dealId: input.dealId }, e);
+  }
+
+  try {
+    await sendDealStageChangedSmsNow(input);
+  } catch (e) {
+    logger.error('[tools.move_deal_stage] stage-change send failed', { dealId: input.dealId }, e);
+  }
+}
+
+async function sendDealStageChangedSmsNow(input: {
+  spaceId: string;
+  dealId: string;
+  stageName: string;
+}): Promise<void> {
+  const { data: links } = await supabase
+    .from('DealContact')
+    .select('contactId')
+    .eq('dealId', input.dealId);
+  const contactIds = [...new Set((links ?? []).map((row: { contactId: string }) => row.contactId).filter(Boolean))];
+  if (contactIds.length === 0) return;
+
+  const { data: contacts } = await supabase
+    .from('Contact')
+    .select('id, name, phone')
+    .in('id', contactIds)
+    .eq('spaceId', input.spaceId);
+
+  const { data: profile } = await supabase
+    .from('AIUserProfile')
+    .select('displayName')
+    .eq('spaceId', input.spaceId)
+    .maybeSingle();
+  const agentFirstName = firstNameOf(profile?.displayName, 'I') || 'I';
+
+  for (const contact of contacts ?? []) {
+    const phone = (contact.phone as string | null | undefined)?.trim();
+    if (!phone) continue;
+    const body = composeDealStageChangedSms(
+      (contact.name as string | null | undefined) ?? 'there',
+      input.stageName,
+      agentFirstName,
+    );
+    const sent = await sendSMS({ to: phone, body });
+    if (!sent) continue;
+    const { error } = await supabase.from('ContactActivity').insert({
+      id: crypto.randomUUID(),
+      contactId: contact.id,
+      spaceId: input.spaceId,
+      type: 'note',
+      content: `SMS: ${body.slice(0, 140)}${body.length > 140 ? '…' : ''}`,
+      metadata: { channel: 'sms', via: 'trigger_send', event: 'deal_stage_changed', dealId: input.dealId },
+    });
+    if (error) {
+      logger.warn('[tools.move_deal_stage] send activity insert failed', { contactId: contact.id }, error);
+    }
+  }
+}

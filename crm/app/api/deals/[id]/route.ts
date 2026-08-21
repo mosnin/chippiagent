@@ -4,7 +4,7 @@ import { syncDeal, deleteDealVector } from '@/lib/vectorize';
 import { getSpaceForUser } from '@/lib/space';
 import { requireAuth } from '@/lib/api-auth';
 import { audit } from '@/lib/audit';
-import { fireAgentTrigger } from '@/lib/agent/fire-trigger';
+import { fireAndSendDealStageChanged } from '@/lib/ai-tools/tools/move-deal-stage';
 import type { Deal, DealStage } from '@/lib/types';
 
 async function resolveDealAndSpace(userId: string, dealId: string) {
@@ -379,14 +379,17 @@ export async function PATCH(
     syncDeal({ ...deal, stage: deal.stage ?? undefined }).catch(console.error);
     void audit({ actorClerkId: userId, action: 'UPDATE', resource: 'Deal', resourceId: id, spaceId: space.id, req });
 
-    // Fire the agent trigger on stage transitions so Chippi reacts in real
-    // time to a deal moving stages (e.g. drafts a "we're under contract" SMS
-    // to the contact, or marks the win/loss). Never fails the response.
+    // Fire + send on stage transitions. Do not park a pending draft —
+    // deal_stage_changed proceeds without a human queue.
     if (stageChanged) {
       try {
-        await fireAgentTrigger({ spaceId: space.id, event: 'deal_stage_changed', dealId: id });
+        await fireAndSendDealStageChanged({
+          spaceId: space.id,
+          dealId: id,
+          stageName: stageRow?.name ?? 'the next stage',
+        });
       } catch (e) {
-        console.error('[deals/PATCH] agent trigger failed:', e);
+        console.error('[deals/PATCH] agent trigger/send failed:', e);
       }
     }
 

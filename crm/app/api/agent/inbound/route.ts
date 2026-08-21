@@ -11,16 +11,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { fireAgentTrigger } from '@/lib/agent/fire-trigger';
-
-const AGENT_INTERNAL_SECRET = process.env.AGENT_INTERNAL_SECRET ?? '';
+import { firstNameOf } from '@/lib/agent/first-touch';
+import { sendSMS } from '@/lib/sms';
 
 export async function POST(req: NextRequest) {
-  if (!AGENT_INTERNAL_SECRET) {
+  const secret = process.env.AGENT_INTERNAL_SECRET ?? '';
+  if (!secret) {
     return NextResponse.json({ error: 'Server misconfiguration' }, { status: 503 });
   }
 
   const auth = req.headers.get('authorization');
-  if (!auth || auth !== `Bearer ${AGENT_INTERNAL_SECRET}`) {
+  if (!auth || auth !== `Bearer ${secret}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -53,7 +54,7 @@ export async function POST(req: NextRequest) {
   // Validate contact belongs to the stated space
   const { data: contact } = await supabase
     .from('Contact')
-    .select('id, name, leadScore')
+    .select('id, name, phone, leadScore')
     .eq('id', contactId)
     .eq('spaceId', spaceId)
     .maybeSingle();
@@ -98,22 +99,11 @@ export async function POST(req: NextRequest) {
       .eq('spaceId', spaceId);
   }
 
-  // Fire the inbound_message trigger through the helper so it gets rate-
-  // limited + (if enabled in AGENT_IMMEDIATE_EVENTS) calls the Modal webhook
-  // immediately rather than waiting for the next 4-hour sweep. This is what
-  // closes lead-response latency from "0-4hr" to "~30s," which is the
-  // single largest conversion lever per the industry data on
-  // speed-to-lead-response.
-  //
-  // Known limitation: the dedupe window (default 120s) means rapid follow-up
-  // messages from the same contact share one immediate-fire. The agent's
-  // pending Modal run sees a single queued trigger; messages within the
-  // dedupe window currently miss the queue too. Acceptable for v1 — real
-  // conversations have gaps of minutes, not seconds. If this becomes a
-  // real problem in production, the fix is to make the dedupe window
-  // event-aware (short for inbound_message, default for everything else).
+  // Fire + send. Do not park a pending draft — inbound_message proceeds
+  // without a human queue. The wake still happens so the autonomous run
+  // can continue the thread; the SMS leaves now.
   try {
-    await fireAgentTrigger({
+    const trigger = await fireAgentTrigger({
       spaceId,
       event: 'inbound_message',
       contactId,
@@ -121,9 +111,52 @@ export async function POST(req: NextRequest) {
       channel,
       sourceDraftId: draftId,
     });
+    await sendInboundReplyNow({
+      spaceId,
+      contactId,
+      phone: contact.phone,
+      contactName: contact.name,
+      alreadySent: trigger.firstTouchReply?.sent === true,
+      body: trigger.firstTouchReply?.content,
+    });
   } catch (e) {
-    console.error('[agent/inbound] agent trigger failed (non-fatal):', e);
+    console.error('[agent/inbound] agent trigger/send failed (non-fatal):', e);
   }
 
   return NextResponse.json({ recorded: true, contactId, channel });
+}
+
+async function sendInboundReplyNow(input: {
+  spaceId: string;
+  contactId: string;
+  phone?: string | null;
+  contactName?: string | null;
+  alreadySent?: boolean;
+  body?: string | null;
+}): Promise<void> {
+  if (input.alreadySent) return;
+  const phone = input.phone?.trim();
+  if (!phone) return;
+
+  let body = input.body?.trim() ?? '';
+  if (!body) {
+    const lead = firstNameOf(input.contactName, 'there');
+    body = `Hey ${lead}, got your message — which time works for you?`;
+  }
+  if (/\bchippy\b/i.test(body)) return;
+
+  const sent = await sendSMS({ to: phone, body });
+  if (!sent) return;
+
+  const { error } = await supabase.from('ContactActivity').insert({
+    id: crypto.randomUUID(),
+    contactId: input.contactId,
+    spaceId: input.spaceId,
+    type: 'note',
+    content: `SMS: ${body.slice(0, 140)}${body.length > 140 ? '…' : ''}`,
+    metadata: { channel: 'sms', via: 'trigger_send', event: 'inbound_message' },
+  });
+  if (error) {
+    console.error('[agent/inbound] send activity insert failed', error);
+  }
 }

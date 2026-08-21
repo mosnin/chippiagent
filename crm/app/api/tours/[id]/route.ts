@@ -4,6 +4,8 @@ import { requireAuth } from '@/lib/api-auth';
 import { getSpaceForUser } from '@/lib/space';
 import { sendTourFollowUp, type TourEmailData } from '@/lib/tour-emails';
 import { fireAgentTrigger } from '@/lib/agent/fire-trigger';
+import { firstNameOf } from '@/lib/agent/first-touch';
+import { sendSMS } from '@/lib/sms';
 
 async function resolveTour(userId: string, tourId: string) {
   const { data: tour, error } = await supabase.from('Tour').select('*').eq('id', tourId).maybeSingle();
@@ -180,19 +182,27 @@ export async function PATCH(
     try { await sendTourFollowUp(emailData); } catch (e) { console.error('[tours] follow-up email failed:', e); }
   }
 
-  // Fire the agent trigger on tour completion so Chippi reacts in real
-  // time (drafts a thank-you, asks for feedback, suggests next steps)
-  // instead of waiting for the 4-hour cron sweep. Never fails the response.
+  // Fire + send on completion. Do not park a pending draft — tour_completed
+  // proceeds without a human queue. Never fails the response.
   if (body.status === 'completed' && ctx.tour.status !== 'completed') {
     try {
-      await fireAgentTrigger({
+      const trigger = await fireAgentTrigger({
         spaceId: ctx.space.id,
         event: 'tour_completed',
         contactId: data.contactId ?? undefined,
         tourId: data.id,
       });
+      await sendTourCompletedSmsNow({
+        spaceId: ctx.space.id,
+        contactId: data.contactId ?? undefined,
+        guestPhone: data.guestPhone,
+        guestName: data.guestName,
+        propertyAddress: data.propertyAddress,
+        alreadySent: trigger.tourFollowUp?.sent === true,
+        body: trigger.tourFollowUp?.content,
+      });
     } catch (e) {
-      console.error('[tours/PATCH] agent trigger failed:', e);
+      console.error('[tours/PATCH] agent trigger/send failed:', e);
     }
   }
 
@@ -215,4 +225,53 @@ export async function DELETE(
   if (error) throw error;
 
   return NextResponse.json({ success: true });
+}
+
+async function sendTourCompletedSmsNow(input: {
+  spaceId: string;
+  contactId?: string;
+  guestPhone?: string | null;
+  guestName?: string | null;
+  propertyAddress?: string | null;
+  alreadySent?: boolean;
+  body?: string | null;
+}): Promise<void> {
+  if (input.alreadySent) return;
+
+  let phone = input.guestPhone?.trim() ?? '';
+  let name = input.guestName;
+  if (input.contactId) {
+    const { data: contact } = await supabase
+      .from('Contact')
+      .select('name, phone')
+      .eq('id', input.contactId)
+      .eq('spaceId', input.spaceId)
+      .maybeSingle();
+    phone = contact?.phone?.trim() || phone;
+    name = contact?.name || name;
+  }
+  if (!phone) return;
+
+  let body = input.body?.trim() ?? '';
+  if (!body) {
+    const lead = firstNameOf(name, 'there');
+    const place = input.propertyAddress?.trim() || 'the showing';
+    body = `Hey ${lead}, how did ${place} feel? Want to talk next steps?`;
+  }
+  if (/\bchippy\b/i.test(body)) return;
+
+  const sent = await sendSMS({ to: phone, body });
+  if (!sent || !input.contactId) return;
+
+  const { error } = await supabase.from('ContactActivity').insert({
+    id: crypto.randomUUID(),
+    contactId: input.contactId,
+    spaceId: input.spaceId,
+    type: 'note',
+    content: `SMS: ${body.slice(0, 140)}${body.length > 140 ? '…' : ''}`,
+    metadata: { channel: 'sms', via: 'trigger_send', event: 'tour_completed' },
+  });
+  if (error) {
+    console.error('[tours/PATCH] send activity insert failed', error);
+  }
 }
