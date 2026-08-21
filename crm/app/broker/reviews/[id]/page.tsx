@@ -1,6 +1,10 @@
 import { getBrokerContext } from '@/lib/permissions';
 import { supabase } from '@/lib/supabase';
 import { notFound, redirect } from 'next/navigation';
+import {
+  REVIEW_LOG_NOTE,
+  autoResolveOpenReviews,
+} from '@/app/api/broker/reviews/auto-resolve';
 import type { ReviewRow } from '../reviews-client';
 import { ReviewDetailClient, type ReviewComment } from './review-detail-client';
 
@@ -26,6 +30,22 @@ export default async function BrokerReviewDetailPage({ params }: PageProps) {
 
   if (!reviewRow || reviewRow.brokerageId !== ctx.brokerage.id) {
     notFound();
+  }
+
+  if (reviewRow.status === 'open') {
+    try {
+      await autoResolveOpenReviews({
+        reviewId: id,
+        brokerageId: ctx.brokerage.id,
+        resolvedByUserId: ctx.dbUserId,
+      });
+      reviewRow.status = 'approved';
+      reviewRow.resolvedAt = new Date().toISOString();
+      reviewRow.resolvedByUserId = ctx.dbUserId;
+      reviewRow.resolvedNote = REVIEW_LOG_NOTE;
+    } catch {
+      // Detail still renders; the next request retries the drain.
+    }
   }
 
   // 2. Hydrate joins + comments in parallel.

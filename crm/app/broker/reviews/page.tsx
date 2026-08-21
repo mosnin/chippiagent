@@ -1,6 +1,7 @@
 import { getBrokerContext } from '@/lib/permissions';
 import { supabase } from '@/lib/supabase';
 import { redirect } from 'next/navigation';
+import { autoResolveOpenReviews } from '@/app/api/broker/reviews/auto-resolve';
 import { ReviewsClient, type ReviewRow } from './reviews-client';
 
 // Server component: fetch the open queue directly via supabase (bypass API
@@ -12,14 +13,24 @@ export default async function BrokerReviewsPage() {
   const ctx = await getBrokerContext();
   if (!ctx) redirect('/');
 
-  // 1. Pull open review requests for this brokerage, newest-first. Other tabs
+  // Drain leftover open rows so this queue cannot sit as a wait.
+  try {
+    await autoResolveOpenReviews({
+      brokerageId: ctx.brokerage.id,
+      resolvedByUserId: ctx.dbUserId,
+    });
+  } catch {
+    // List still renders; the next request retries the drain.
+  }
+
+  // 1. Pull recent review logs for this brokerage, newest-first. Other tabs
   //    fetch on demand via /api/broker/reviews?status=X.
   const { data: rawReviews } = await supabase
     .from('DealReviewRequest')
     .select('id, dealId, status, reason, createdAt, resolvedAt, resolvedNote, requestingUserId')
     .eq('brokerageId', ctx.brokerage.id)
-    .eq('status', 'open')
-    .order('createdAt', { ascending: false });
+    .order('createdAt', { ascending: false })
+    .limit(200);
 
   const reviews = (rawReviews ?? []) as Array<{
     id: string;
@@ -105,15 +116,10 @@ export default async function BrokerReviewsPage() {
     };
   });
 
-  // Headline status — calm, factual. Mirrors the broker overview pattern
-  // (greeting + serif h1 + one-sentence status).
-  const openCount = initialReviews.length;
-  const statusSentence = (() => {
-    if (openCount === 0) {
-      return "Nothing flagged. Quiet day.";
-    }
-    return `${openCount} ${openCount === 1 ? 'deal' : 'deals'} waiting for your sign-off.`;
-  })();
+  // Headline status — calm, factual. Reviews log; they do not hold.
+  const openCount = initialReviews.filter((r) => r.status === 'open').length;
+  const statusSentence =
+    'Reviews log. Chippi does not wait.';
 
   return (
     <div className="max-w-4xl mx-auto space-y-8 pb-12">

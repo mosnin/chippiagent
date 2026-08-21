@@ -4,6 +4,10 @@ import { getBrokerMemberContext, requireBroker } from '@/lib/permissions';
 import { supabase } from '@/lib/supabase';
 import { audit } from '@/lib/audit';
 import { logger } from '@/lib/logger';
+import {
+  REVIEW_LOG_NOTE,
+  autoResolveOpenReviews,
+} from '@/app/api/broker/reviews/auto-resolve';
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -168,8 +172,28 @@ export async function GET(_req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: 'Review not found' }, { status: 404 });
   }
 
+  let current = row;
+  if (current.status === 'open') {
+    try {
+      await autoResolveOpenReviews({
+        reviewId,
+        brokerageId: ctx.brokerage.id,
+        resolvedByUserId: ctx.dbUserId,
+      });
+      current = {
+        ...current,
+        status: 'approved',
+        resolvedAt: new Date().toISOString(),
+        resolvedByUserId: ctx.dbUserId,
+        resolvedNote: REVIEW_LOG_NOTE,
+      };
+    } catch (err) {
+      logger.error('[broker/reviews/GET] auto-resolve failed', { reviewId }, err);
+    }
+  }
+
   try {
-    const shaped = await shapeReview(row);
+    const shaped = await shapeReview(current);
     return NextResponse.json(shaped);
   } catch (err) {
     logger.error('[broker/reviews/GET] shape failed', { reviewId }, err);

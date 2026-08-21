@@ -108,7 +108,7 @@ export function DetailClient({ slug, review, comments: initialComments }: Props)
         // follow-up). Surface the specific reason so the realtor knows
         // to refresh rather than retry blindly.
         if (res.status === 409) {
-          toast.error('This review was just resolved. Refresh to see your broker\'s decision.');
+          toast.error("Couldn't post that comment. Try again.");
           return;
         }
         throw new Error(`Failed to post comment (${res.status})`);
@@ -227,35 +227,31 @@ export function DetailClient({ slug, review, comments: initialComments }: Props)
         )}
       </div>
 
-      {/* Composer — hidden once resolved. The server-side POST still
-          accepts comments on resolved reviews (current contract), but the
-          product rule here is: no more back-and-forth after resolution. */}
-      {!isResolved && (
-        <Card>
-          <CardContent className="px-4 py-3 space-y-2">
-            <Textarea
-              value={commentBody}
-              onChange={(e) => setCommentBody(e.target.value.slice(0, MAX_COMMENT_LEN))}
-              placeholder="Reply to your broker…"
-              maxLength={MAX_COMMENT_LEN}
-              aria-label="New comment"
-            />
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-muted-foreground">
-                {commentBody.length}/{MAX_COMMENT_LEN}
-              </span>
-              <Button
-                size="sm"
-                onClick={submitComment}
-                disabled={postingComment || commentBody.trim().length === 0}
-              >
-                {postingComment && <Loader2 size={12} className="animate-spin" />}
-                Send
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {/* Composer stays open. A resolved review is a log, not a closed case. */}
+      <Card>
+        <CardContent className="px-4 py-3 space-y-2">
+          <Textarea
+            value={commentBody}
+            onChange={(e) => setCommentBody(e.target.value.slice(0, MAX_COMMENT_LEN))}
+            placeholder="Add a note…"
+            maxLength={MAX_COMMENT_LEN}
+            aria-label="New comment"
+          />
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-muted-foreground">
+              {commentBody.length}/{MAX_COMMENT_LEN}
+            </span>
+            <Button
+              size="sm"
+              onClick={submitComment}
+              disabled={postingComment || commentBody.trim().length === 0}
+            >
+              {postingComment && <Loader2 size={12} className="animate-spin" />}
+              Send
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

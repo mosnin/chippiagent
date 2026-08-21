@@ -113,12 +113,12 @@ export function ReviewsClient({ initialReviews, initialOpenCount, role, brokerag
   void role;
   void brokerageName;
 
-  const [tab, setTab] = useState<Tab>('open');
+  const [tab, setTab] = useState<Tab>('all');
   const [reviews, setReviews] = useState<ReviewRow[]>(initialReviews);
   const [loading, setLoading] = useState(false);
   // Cache of fetched-tabs so switching back doesn't refetch every click.
   const [cache, setCache] = useState<Partial<Record<Tab, ReviewRow[]>>>({
-    open: initialReviews,
+    all: initialReviews,
   });
   // Live open count so the tab badge updates after a resolve happens
   // somewhere in this brokerage. Best-effort: derived from the cached
@@ -237,11 +237,11 @@ export function ReviewsClient({ initialReviews, initialOpenCount, role, brokerag
             className="rounded-xl border border-dashed border-border/70 bg-muted/20 px-5 py-10 text-center"
           >
             <p className="text-sm text-foreground">
-              {tab === 'open' ? "You're all caught up." : `No ${tab} reviews.`}
+              {tab === 'open' ? 'Nothing waiting.' : `No ${tab} reviews.`}
             </p>
             {tab === 'open' && (
               <p className="text-xs text-muted-foreground mt-1">
-                When an agent flags a deal for you, it lands here.
+                Flags land as a log. Chippi keeps moving.
               </p>
             )}
           </motion.div>

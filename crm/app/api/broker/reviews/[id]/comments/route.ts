@@ -62,18 +62,8 @@ export async function POST(req: NextRequest, { params }: Params) {
   if (!review) {
     return NextResponse.json({ error: 'Review not found' }, { status: 404 });
   }
-  // Audit finding: before this gate, comments could still be POSTed after
-  // the broker had resolved the review (the UI was going through stale
-  // state). A resolved review is terminal — both sides see the resolution
-  // note + resolver and the conversation is over. Returning 409 surfaces
-  // that to the client rather than silently accepting a comment that
-  // would appear on a "closed" thread.
-  if (review.status !== 'open') {
-    return NextResponse.json(
-      { error: 'This review is already resolved. No further comments.' },
-      { status: 409 },
-    );
-  }
+  // Reviews are a log, not a hold. Comments stay writable after auto-resolve
+  // so the thread can continue without anyone waiting on status.
 
   // Resolve the caller's DB user id.
   const { data: dbUser, error: userErr } = await supabase

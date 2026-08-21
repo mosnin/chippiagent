@@ -197,7 +197,7 @@ describe('POST /api/deals/[id]/review-request', () => {
     expect(body.error).toMatch(/non-brokerage/i);
   });
 
-  it('409 when the partial unique index fires (duplicate open request)', async () => {
+  it('does not 409 when a leftover open row races the insert — logs and continues', async () => {
     mockByTable.Deal = {
       single: { id: 'd_1', title: 'X', spaceId: 's_1', Space: { id: 's_1', slug: 'jane', brokerageId: 'b_1' } },
     };
@@ -206,12 +206,12 @@ describe('POST /api/deals/[id]/review-request', () => {
       insertError: { code: '23505', message: 'duplicate key value' },
     };
     const res = await invoke('d_1', { reason: 'please take a look' });
-    expect(res.status).toBe(409);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toMatch(/already has an open review/i);
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { status: string };
+    expect(body.status).toBe('approved');
   });
 
-  it('201 on happy path + fires notifyBroker with review_requested', async () => {
+  it('201 on happy path writes an already-resolved log + fires notifyBroker', async () => {
     mockByTable.Deal = {
       single: { id: 'd_1', title: 'X', spaceId: 's_1', Space: { id: 's_1', slug: 'jane', brokerageId: 'b_1' } },
     };
@@ -220,13 +220,15 @@ describe('POST /api/deals/[id]/review-request', () => {
       single: {
         id: 'r_1',
         dealId: 'd_1',
-        status: 'open',
+        status: 'approved',
         reason: 'please review',
         createdAt: new Date().toISOString(),
       },
     };
     const res = await invoke('d_1', { reason: 'please review' });
     expect(res.status).toBe(201);
+    const body = (await res.json()) as { status: string };
+    expect(body.status).toBe('approved');
     expect(notifyBrokerMock).toHaveBeenCalledTimes(1);
     expect((notifyBrokerMock.mock.calls as unknown[][])[0][0]).toMatchObject({ type: 'review_requested' });
   });
@@ -318,5 +320,69 @@ describe('POST /api/broker/reviews/[id]/comments', () => {
     };
     const res = await invoke('r_1', { body: 'got it' });
     expect(res.status).toBe(201);
+  });
+
+  it('201 when the review is already approved — comments do not wait on status', async () => {
+    mockByTable.DealReviewRequest = {
+      single: { id: 'r_1', brokerageId: 'b_1', requestingUserId: 'u_2', status: 'approved' },
+    };
+    mockByTable.User = { single: { id: 'u_1', name: 'Jane', clerkId: 'clerk_1' } };
+    mockByTable.DealReviewComment = {
+      single: {
+        id: 'c_1',
+        body: 'noted',
+        createdAt: new Date().toISOString(),
+        authorUserId: 'u_1',
+      },
+    };
+    const res = await invoke('r_1', { body: 'noted' });
+    expect(res.status).toBe(201);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// request_deal_review tool — must not pause Chippi
+// ──────────────────────────────────────────────────────────────────────────
+describe('requestDealReviewTool', () => {
+  it('brands the auto-resolve note as Chippi, never Chippy', async () => {
+    const { REVIEW_LOG_NOTE } = await import('@/app/api/broker/reviews/auto-resolve');
+    expect(REVIEW_LOG_NOTE).toMatch(/Chippi/);
+    expect(REVIEW_LOG_NOTE).not.toMatch(/Chippy/);
+  });
+
+  it('does not require approval — reviews must not pause Chippi', async () => {
+    const { requestDealReviewTool } = await import('@/lib/ai-tools/tools/request-deal-review');
+    expect(requestDealReviewTool.requiresApproval).toBe(false);
+  });
+
+  it('writes an already-approved log and continues', async () => {
+    mockByTable.Deal = { single: { id: 'd_1', title: 'Big deal' } };
+    mockByTable.Space = { single: { id: 's_1', ownerId: 'u_owner', brokerageId: 'b_1' } };
+    mockByTable.DealReviewRequest = {};
+    const { requestDealReviewTool } = await import('@/lib/ai-tools/tools/request-deal-review');
+    const result = await requestDealReviewTool.handler(
+      { dealId: 'd_1', reason: 'Unusual commission split needs a log' },
+      {
+        userId: 'clerk_1',
+        space: { id: 's_1', slug: 'jane', name: 'Jane', ownerId: 'u_owner' },
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.display).toBe('success');
+    expect(result.summary).toMatch(/Chippi continues/);
+    expect(result.data).toMatchObject({ dealId: 'd_1', status: 'approved' });
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// GET queues drain leftover open rows
+// ──────────────────────────────────────────────────────────────────────────
+describe('GET review queues auto-resolve leftover opens', () => {
+  it('GET /api/broker/reviews drains open rows before listing', async () => {
+    mockByTable.DealReviewRequest = { rows: [] };
+    const mod = await import('@/app/api/broker/reviews/route');
+    const res = await mod.GET(getReq('http://x/api/broker/reviews?status=open'));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
   });
 });

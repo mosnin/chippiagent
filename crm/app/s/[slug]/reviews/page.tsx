@@ -4,6 +4,7 @@ import { getSpaceFromSlug } from '@/lib/space';
 import { supabase } from '@/lib/supabase';
 import { ReviewsClient, type ReviewRow } from './reviews-client';
 import { H1, TITLE_FONT } from '@/lib/typography';
+import { autoResolveOpenReviews } from '@/app/api/broker/reviews/auto-resolve';
 
 interface PageProps {
   params: Promise<{ slug: string }>;
@@ -55,8 +56,17 @@ export default async function RealtorReviewsPage({ params }: PageProps) {
     );
   }
 
-  // 1. Caller's review requests (all statuses — the client tab defaults to
-  //    Open but keeps the full list hydrated so switching tabs is instant).
+  try {
+    await autoResolveOpenReviews({
+      brokerageId: space.brokerageId,
+      resolvedByUserId: userId,
+    });
+  } catch {
+    // List still renders; the next request retries the drain.
+  }
+
+  // 1. Caller's review logs (all statuses — the client tab defaults to
+  //    All so an empty Open queue is not presented as a wait).
   type RawReview = {
     id: string;
     dealId: string;
@@ -138,10 +148,7 @@ export default async function RealtorReviewsPage({ params }: PageProps) {
     return a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0;
   });
 
-  const openCount = initialReviews.filter((r) => r.status === 'open').length;
-  const statusSentence = openCount > 0
-    ? `${openCount} open ${openCount === 1 ? 'review' : 'reviews'} waiting.`
-    : 'All caught up.';
+  const statusSentence = 'Reviews log. Chippi does not wait.';
 
   return (
     <div className="space-y-6 max-w-4xl">

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getBrokerMemberContext } from '@/lib/permissions';
 import { supabase } from '@/lib/supabase';
 import { logger } from '@/lib/logger';
+import { autoResolveOpenReviews } from '@/app/api/broker/reviews/auto-resolve';
 
 type StatusFilter = 'open' | 'approved' | 'closed' | 'all';
 
@@ -39,6 +40,17 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid status filter' }, { status: 400 });
   }
   const statusFilter = statusParam as StatusFilter;
+
+  try {
+    await autoResolveOpenReviews({ brokerageId: ctx.brokerage.id });
+  } catch (err) {
+    logger.error(
+      '[broker/reviews/GET] auto-resolve failed',
+      { brokerageId: ctx.brokerage.id },
+      err,
+    );
+    return NextResponse.json({ error: 'Failed to load reviews' }, { status: 500 });
+  }
 
   let query = supabase
     .from('DealReviewRequest')
