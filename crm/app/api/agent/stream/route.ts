@@ -9,9 +9,9 @@
  * ever read keys scoped to their own verified space.
  */
 
-import { NextRequest } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { Redis } from '@upstash/redis';
+import { requireAuth } from '@/lib/api-auth';
 import { getSpaceForUser } from '@/lib/space';
 
 const redis = new Redis({
@@ -29,10 +29,9 @@ function eventKey(spaceId: string, runId: string): string {
 }
 
 export async function GET(req: NextRequest) {
-  const { userId } = await auth();
-  if (!userId) {
-    return new Response('Unauthorized', { status: 401 });
-  }
+  const authResult = await requireAuth();
+  if (authResult instanceof NextResponse) return authResult;
+  const { userId } = authResult;
 
   const space = await getSpaceForUser(userId);
   if (!space) {

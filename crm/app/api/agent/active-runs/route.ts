@@ -13,8 +13,8 @@
  */
 
 import { NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
 import { Redis } from '@upstash/redis';
+import { requireAuth } from '@/lib/api-auth';
 import { getSpaceForUser } from '@/lib/space';
 
 const redis = new Redis({
@@ -25,10 +25,9 @@ const redis = new Redis({
 const MAX_AGE_MS = 15 * 60 * 1000;
 
 export async function GET() {
-  const { userId } = await auth();
-  if (!userId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const authResult = await requireAuth();
+  if (authResult instanceof NextResponse) return authResult;
+  const { userId } = authResult;
 
   const space = await getSpaceForUser(userId);
   if (!space) {
