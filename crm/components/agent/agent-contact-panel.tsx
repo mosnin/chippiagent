@@ -55,6 +55,14 @@ interface AgentContactData {
   activity: AgentActivity[];
 }
 
+/** True only when the loaded payload belongs to the contact on screen. */
+export function isAgentContactDataCurrent(
+  data: { contactId: string } | null,
+  contactId: string,
+): boolean {
+  return data !== null && data.contactId === contactId;
+}
+
 const CHANNEL_PILL: Record<string, string> = {
   sms: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400',
   email: 'bg-blue-50 text-blue-700 dark:bg-blue-500/15 dark:text-blue-400',
@@ -190,18 +198,31 @@ export function AgentContactPanel({ contactId, slug, contactName }: { contactId:
   const [triggered, setTriggered] = useState(false);
   const [activeSection, setActiveSection] = useState<'drafts' | 'memories' | 'activity'>('drafts');
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
     try {
-      const res = await fetch(`/api/agent/contact/${contactId}`);
-      if (res.ok) setData(await res.json());
-    } catch {
+      const res = await fetch(`/api/agent/contact/${contactId}`, { signal });
+      if (!res.ok) return;
+      const json = (await res.json()) as AgentContactData;
+      if (signal?.aborted) return;
+      if (!isAgentContactDataCurrent(json, contactId)) return;
+      setData(json);
+    } catch (err) {
+      if ((err as { name?: string })?.name === 'AbortError') return;
       // silently fail — panel is not critical path
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
   }, [contactId]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    const controller = new AbortController();
+    // Drop the previous contact immediately so a slow fetch can't leave
+    // Alice's drafts on Bob's page — Approve would send the wrong message.
+    setData(null);
+    setLoading(true);
+    void load(controller.signal);
+    return () => controller.abort();
+  }, [load]);
 
   async function handleApprove(draftId: string, content: string) {
     await fetch(`/api/agent/drafts/${draftId}`, {
@@ -242,10 +263,11 @@ export function AgentContactPanel({ contactId, slug, contactName }: { contactId:
     }
   }
 
-  const pendingDrafts = data?.drafts.filter(d => d.status === 'pending') ?? [];
-  const allDrafts = data?.drafts ?? [];
-  const memories = data?.memories ?? [];
-  const activity = data?.activity ?? [];
+  const current = isAgentContactDataCurrent(data, contactId) ? data : null;
+  const pendingDrafts = current?.drafts.filter(d => d.status === 'pending') ?? [];
+  const allDrafts = current?.drafts ?? [];
+  const memories = current?.memories ?? [];
+  const activity = current?.activity ?? [];
 
   if (loading) {
     return (

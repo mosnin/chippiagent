@@ -50,6 +50,14 @@ export function ChippiAssessmentCard({ entityType, entityId, entityName, slug }:
 
   useEffect(() => {
     const controller = new AbortController();
+    setData({
+      brief: null,
+      briefUpdatedAt: null,
+      scoreExplanation: null,
+      explainedScore: null,
+      goals: [],
+      isLoaded: false,
+    });
     async function load() {
       try {
         const briefs = entityType === 'contact'
@@ -66,6 +74,7 @@ export function ChippiAssessmentCard({ entityType, entityId, entityName, slug }:
         const briefData = briefRes.ok ? await briefRes.json() : {};
         const goalsData = goalsRes.ok ? await goalsRes.json() : [];
 
+        if (controller.signal.aborted) return;
         setData({
           brief: briefData.brief ?? null,
           briefUpdatedAt: briefData.briefUpdatedAt ?? null,
@@ -74,8 +83,11 @@ export function ChippiAssessmentCard({ entityType, entityId, entityName, slug }:
           goals: Array.isArray(goalsData) ? goalsData.slice(0, 3) : [],
           isLoaded: true,
         });
-      } catch {
-        setData(prev => ({ ...prev, isLoaded: true }));
+      } catch (err) {
+        if ((err as { name?: string })?.name === 'AbortError') return;
+        if (!controller.signal.aborted) {
+          setData(prev => ({ ...prev, isLoaded: true }));
+        }
       }
     }
     void load();
