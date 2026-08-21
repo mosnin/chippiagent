@@ -86,6 +86,43 @@ describe('fireAgentTrigger first-touch', () => {
     expect(draftFirstTouchForLead).not.toHaveBeenCalled();
   });
 
+  it('releases the dedupe claim when Redis push fails so a retry can queue', async () => {
+    const fetchMock = kvFetch();
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes('/incr/')) return new Response(JSON.stringify({ result: 1 }), { status: 200 });
+      if (url.includes('/expire/')) return new Response('OK', { status: 200 });
+      if (url.includes('/set/')) return new Response(JSON.stringify({ result: 'OK' }), { status: 200 });
+      if (url.includes('/rpush/')) return new Response('fail', { status: 500 });
+      if (url.includes('/del/')) return new Response(JSON.stringify({ result: 1 }), { status: 200 });
+      if (url.includes('/lpush/') || url.includes('/ltrim/')) return new Response('OK', { status: 200 });
+      return new Response('not found', { status: 404 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await fireAgentTrigger({ spaceId: 's1', event: 'new_lead', contactId: 'c1' });
+    expect(result.queued).toBe(false);
+    expect(result.reason).toBe('redis_push_failed');
+    expect(result.firstTouch?.sent).toBe(true);
+    expect(draftFirstTouchForLead).toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/del/'))).toBe(true);
+  });
+
+  it('does not throw when Redis fetch fails after claiming the slot', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes('/incr/')) return new Response(JSON.stringify({ result: 1 }), { status: 200 });
+      if (url.includes('/set/')) return new Response(JSON.stringify({ result: 'OK' }), { status: 200 });
+      if (url.includes('/rpush/')) throw new Error('network down');
+      if (url.includes('/del/')) return new Response(JSON.stringify({ result: 1 }), { status: 200 });
+      return new Response('OK', { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(fireAgentTrigger({ spaceId: 's1', event: 'new_lead', contactId: 'c1' })).resolves.toMatchObject({
+      queued: false,
+      reason: 'redis_unavailable',
+      firstTouch: expect.objectContaining({ sent: true }),
+    });
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/del/'))).toBe(true);
+  });
+
   it('still drafts when Redis is down — the text cannot wait on the queue', async () => {
     delete process.env.KV_REST_API_URL;
     delete process.env.KV_REST_API_TOKEN;

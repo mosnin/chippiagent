@@ -363,7 +363,7 @@ export async function draftFirstTouchForLead(
   }
 
   const cutoff = new Date(now.getTime() - DEDUPE_WINDOW_HOURS * 60 * 60 * 1000).toISOString();
-  const { data: existingRows } = await supabase
+  const { data: existingRows, error: draftsError } = await supabase
     .from('AgentDraft')
     .select('id,content,status,channel,reasoning')
     .eq('spaceId', input.spaceId)
@@ -372,6 +372,10 @@ export async function draftFirstTouchForLead(
     .gte('createdAt', cutoff)
     .order('createdAt', { ascending: false })
     .limit(20);
+  if (draftsError) {
+    logger.error('[first-touch] draft lookup failed', { spaceId: input.spaceId }, draftsError);
+    throw new Error('Draft lookup failed');
+  }
 
   const drafts = (existingRows ?? []) as Array<{
     id: string;
@@ -473,7 +477,7 @@ export async function draftFirstTouchForLead(
   };
 
   if (emptyStub) {
-    const { error: updateError } = await supabase
+    const { data: updated, error: updateError } = await supabase
       .from('AgentDraft')
       .update({
         content: row.content,
@@ -484,21 +488,26 @@ export async function draftFirstTouchForLead(
         updatedAt: row.updatedAt,
       })
       .eq('id', emptyStub.id)
-      .eq('spaceId', input.spaceId);
+      .eq('spaceId', input.spaceId)
+      .select('id');
+    if (!updateError && updated && updated.length > 0) {
+      return {
+        action: 'filled',
+        draftId: emptyStub.id,
+        contactId: input.contactId,
+        channel: 'sms',
+        status: 'sent',
+        content,
+        windows: windowLabels,
+        sent: true,
+      };
+    }
     if (updateError) {
       logger.error('[first-touch] failed to record sent SMS', { spaceId: input.spaceId }, updateError);
-      throw new Error('Failed to record first-touch SMS');
     }
-    return {
-      action: 'filled',
-      draftId: emptyStub.id,
-      contactId: input.contactId,
-      channel: 'sms',
-      status: 'sent',
-      content,
-      windows: windowLabels,
-      sent: true,
-    };
+    // Stub vanished or the update wrote zero rows — insert a new sent
+    // receipt so the SMS is not invisible to the next run.
+    row.id = crypto.randomUUID();
   }
 
   const { data: inserted, error: insertError } = await supabase.from('AgentDraft').insert(row).select('id').maybeSingle();

@@ -22,7 +22,7 @@ export async function logToolCallStart(
   const inputSummary = JSON.stringify(args).slice(0, 500);
 
   try {
-    await supabase.from('ExecutionStep').insert({
+    const { error } = await supabase.from('ExecutionStep').insert({
       id: stepId,
       spaceId,
       taskId: taskId ?? null,
@@ -33,6 +33,7 @@ export async function logToolCallStart(
       status: 'running',
       startedAt: new Date().toISOString(),
     });
+    if (error) return stepId;
     inFlight.set(stepId, { stepId, spaceId, taskId, toolName, startedAt: new Date() });
   } catch {
     // Non-blocking — logging failure must never break the tool call
@@ -52,7 +53,7 @@ export async function logToolCallComplete(stepId: string, outputSummary: string)
       toolResult: { output: outputSummary.slice(0, 500) },
       status: 'completed',
       completedAt: new Date().toISOString(),
-    }).eq('id', stepId);
+    }).eq('id', stepId).eq('spaceId', record.spaceId);
   } catch {
     // Non-blocking
   }
@@ -69,7 +70,7 @@ export async function logToolCallError(stepId: string, error: string): Promise<v
       outputSummary: error.slice(0, 500),
       status: 'failed',
       completedAt: new Date().toISOString(),
-    }).eq('id', stepId);
+    }).eq('id', stepId).eq('spaceId', record.spaceId);
   } catch {
     // Non-blocking
   }

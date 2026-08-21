@@ -115,12 +115,16 @@ async function checkRateLimit(kvUrl: string, kvToken: string, spaceId: string): 
   return count <= RATE_LIMIT;
 }
 
+function triggerDedupeKey(input: FireTriggerInput): string {
+  return `agent:trigger-dedupe:${input.spaceId}:${input.event}:${input.contactId ?? 'none'}:${input.dealId ?? 'none'}`;
+}
+
 async function isDuplicate(
   kvUrl: string,
   kvToken: string,
   input: FireTriggerInput,
 ): Promise<boolean> {
-  const key = `agent:trigger-dedupe:${input.spaceId}:${input.event}:${input.contactId ?? 'none'}:${input.dealId ?? 'none'}`;
+  const key = triggerDedupeKey(input);
   // SET NX EX in one atomic op. The key lives DEDUPE_WINDOW_S from THIS
   // event, so it is a true sliding window. The old floor(now/window) bucket
   // reset at fixed clock boundaries — two identical events that straddled a
@@ -133,6 +137,24 @@ async function isDuplicate(
   const { result } = (await res.json()) as { result: string | null };
   // 'OK' → key was absent → first occurrence. null → key existed → duplicate.
   return result === null;
+}
+
+async function releaseDedupeKey(
+  kvUrl: string,
+  kvToken: string,
+  input: FireTriggerInput,
+): Promise<void> {
+  // SET NX claims the window before RPUSH. If the push never lands, the
+  // claim must die or the next retry is treated as a duplicate and the
+  // wake is gone for DEDUPE_WINDOW_S.
+  try {
+    await fetch(`${kvUrl}/del/${encodeURIComponent(triggerDedupeKey(input))}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${kvToken}` },
+    });
+  } catch {
+    // Best-effort — a stuck key only blocks retries for the window.
+  }
 }
 
 async function maybeDraftFirstTouch(input: FireTriggerInput): Promise<FirstTouchDraftResult | undefined> {
@@ -202,55 +224,69 @@ export async function fireAgentTrigger(input: FireTriggerInput): Promise<FireTri
     return { queued: false, reason: 'redis_not_configured', firstTouch, firstTouchReply, tourFollowUp };
   }
 
-  const allowed = await checkRateLimit(kvUrl, kvToken, input.spaceId);
-  if (!allowed) {
-    return { queued: false, reason: 'rate_limited', firstTouch, firstTouchReply, tourFollowUp };
-  }
+  let claimedSlot = false;
+  let pushed = false;
+  try {
+    const allowed = await checkRateLimit(kvUrl, kvToken, input.spaceId);
+    if (!allowed) {
+      return { queued: false, reason: 'rate_limited', firstTouch, firstTouchReply, tourFollowUp };
+    }
 
-  if (await isDuplicate(kvUrl, kvToken, input)) {
-    await recordOutcome(kvUrl, kvToken, input, 'deduped');
-    return { queued: true, deduped: true, firstTouch, firstTouchReply, tourFollowUp };
-  }
+    if (await isDuplicate(kvUrl, kvToken, input)) {
+      await recordOutcome(kvUrl, kvToken, input, 'deduped');
+      return { queued: true, deduped: true, firstTouch, firstTouchReply, tourFollowUp };
+    }
+    claimedSlot = true;
 
-  const trigger = JSON.stringify({
-    event: input.event,
-    contactId: input.contactId ?? null,
-    dealId: input.dealId ?? null,
-    spaceId: input.spaceId,
-    content: input.content ?? null,
-    channel: input.channel ?? null,
-    sourceDraftId: input.sourceDraftId ?? null,
-    tourId: input.tourId ?? null,
-    queuedAt: new Date().toISOString(),
-  });
-  const key = `agent:triggers:${input.spaceId}`;
-
-  const pushRes = await fetch(`${kvUrl}/rpush/${encodeURIComponent(key)}`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${kvToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify([trigger]),
-  });
-  if (!pushRes.ok) {
-    return { queued: false, reason: 'redis_push_failed', firstTouch, firstTouchReply, tourFollowUp };
-  }
-
-  const MODAL_WEBHOOK_URL = process.env.MODAL_WEBHOOK_URL ?? '';
-  const AGENT_INTERNAL_SECRET = process.env.AGENT_INTERNAL_SECRET ?? '';
-  const immediateEvents = parseImmediateEvents(process.env.AGENT_IMMEDIATE_EVENTS);
-
-  let firedImmediately = false;
-  if (immediateEvents.has(input.event) && MODAL_WEBHOOK_URL && AGENT_INTERNAL_SECRET) {
-    // Fire-and-forget — the trigger is already queued in Redis as a fallback.
-    fetch(MODAL_WEBHOOK_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ space_id: input.spaceId, secret: AGENT_INTERNAL_SECRET }),
-    }).catch(() => {
-      // Trigger remains in Redis for the next sweep — no data loss.
+    const trigger = JSON.stringify({
+      event: input.event,
+      contactId: input.contactId ?? null,
+      dealId: input.dealId ?? null,
+      spaceId: input.spaceId,
+      content: input.content ?? null,
+      channel: input.channel ?? null,
+      sourceDraftId: input.sourceDraftId ?? null,
+      tourId: input.tourId ?? null,
+      queuedAt: new Date().toISOString(),
     });
-    firedImmediately = true;
-  }
+    const key = `agent:triggers:${input.spaceId}`;
 
-  await recordOutcome(kvUrl, kvToken, input, firedImmediately ? 'queued_modal' : 'queued');
-  return { queued: true, firedImmediately, firstTouch, firstTouchReply, tourFollowUp };
+    const pushRes = await fetch(`${kvUrl}/rpush/${encodeURIComponent(key)}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${kvToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify([trigger]),
+    });
+    if (!pushRes.ok) {
+      await releaseDedupeKey(kvUrl, kvToken, input);
+      return { queued: false, reason: 'redis_push_failed', firstTouch, firstTouchReply, tourFollowUp };
+    }
+    pushed = true;
+
+    const MODAL_WEBHOOK_URL = process.env.MODAL_WEBHOOK_URL ?? '';
+    const AGENT_INTERNAL_SECRET = process.env.AGENT_INTERNAL_SECRET ?? '';
+    const immediateEvents = parseImmediateEvents(process.env.AGENT_IMMEDIATE_EVENTS);
+
+    let firedImmediately = false;
+    if (immediateEvents.has(input.event) && MODAL_WEBHOOK_URL && AGENT_INTERNAL_SECRET) {
+      // Fire-and-forget — the trigger is already queued in Redis as a fallback.
+      fetch(MODAL_WEBHOOK_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ space_id: input.spaceId, secret: AGENT_INTERNAL_SECRET }),
+      }).catch(() => {
+        // Trigger remains in Redis for the next sweep — no data loss.
+      });
+      firedImmediately = true;
+    }
+
+    await recordOutcome(kvUrl, kvToken, input, firedImmediately ? 'queued_modal' : 'queued');
+    return { queued: true, firedImmediately, firstTouch, firstTouchReply, tourFollowUp };
+  } catch {
+    // Callers treat this helper as never-throw. A claimed slot that never
+    // reached the queue must be released or the retry is silently dropped.
+    if (claimedSlot && !pushed) {
+      await releaseDedupeKey(kvUrl, kvToken, input);
+    }
+    return { queued: false, reason: 'redis_unavailable', firstTouch, firstTouchReply, tourFollowUp };
+  }
 }

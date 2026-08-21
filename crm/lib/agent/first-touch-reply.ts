@@ -294,7 +294,7 @@ export async function draftFirstTouchReplyForLead(
   }
 
   const cutoff = new Date(now.getTime() - FIRST_TOUCH_LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString();
-  const { data: existingRows } = await supabase
+  const { data: existingRows, error: draftsError } = await supabase
     .from('AgentDraft')
     .select('id,content,status,channel,reasoning,createdAt')
     .eq('spaceId', input.spaceId)
@@ -303,10 +303,14 @@ export async function draftFirstTouchReplyForLead(
     .gte('createdAt', cutoff)
     .order('createdAt', { ascending: false })
     .limit(20);
+  if (draftsError) {
+    logger.error('[first-touch-reply] draft lookup failed', { spaceId: input.spaceId }, draftsError);
+    throw new Error('Draft lookup failed');
+  }
 
   const drafts = (existingRows ?? []) as DraftRow[];
   const source = input.sourceDraftId
-    ? drafts.find((row) => row.id === input.sourceDraftId)
+    ? drafts.find((row) => row.id === input.sourceDraftId && isFirstTouchDraft(row))
     : undefined;
   const firstTouch =
     (source && source.status !== 'dismissed' ? source : undefined) ??
@@ -426,7 +430,7 @@ export async function draftFirstTouchReplyForLead(
   };
 
   if (emptyStub) {
-    const { error: updateError } = await supabase
+    const { data: updated, error: updateError } = await supabase
       .from('AgentDraft')
       .update({
         content: row.content,
@@ -437,22 +441,25 @@ export async function draftFirstTouchReplyForLead(
         updatedAt: row.updatedAt,
       })
       .eq('id', emptyStub.id)
-      .eq('spaceId', input.spaceId);
+      .eq('spaceId', input.spaceId)
+      .select('id');
+    if (!updateError && updated && updated.length > 0) {
+      return {
+        action: 'filled',
+        draftId: emptyStub.id,
+        contactId: input.contactId,
+        channel: 'sms',
+        status: 'sent',
+        content,
+        windows: windowLabels,
+        picked,
+        sent: true,
+      };
+    }
     if (updateError) {
       logger.error('[first-touch-reply] failed to record sent SMS', { spaceId: input.spaceId }, updateError);
-      throw new Error('Failed to record first-touch reply SMS');
     }
-    return {
-      action: 'filled',
-      draftId: emptyStub.id,
-      contactId: input.contactId,
-      channel: 'sms',
-      status: 'sent',
-      content,
-      windows: windowLabels,
-      picked,
-      sent: true,
-    };
+    row.id = crypto.randomUUID();
   }
 
   const { data: inserted, error: insertError } = await supabase

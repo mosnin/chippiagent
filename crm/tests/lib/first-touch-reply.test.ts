@@ -17,8 +17,10 @@ let tables: Record<
   {
     single?: Row | null;
     rows?: Row[];
+    listError?: { message: string } | null;
     insertError?: { message: string } | null;
     updateError?: { message: string } | null;
+    updateZeroRows?: boolean;
   }
 > = {};
 let insertedDraft: Row | null = null;
@@ -53,17 +55,19 @@ vi.mock('@/lib/supabase', () => {
     });
     chain.update = vi.fn((row: Row) => {
       if (table === 'AgentDraft') updatedDraft = row;
-      const result = { data: override.updateError ? null : { id: 'draft_empty' }, error: override.updateError ?? null };
-      return {
-        eq: vi.fn(() => ({
-          eq: vi.fn(async () => result),
-          then: (r: (v: unknown) => unknown, e?: (e: unknown) => unknown) => Promise.resolve(result).then(r, e),
-        })),
-        then: (r: (v: unknown) => unknown, e?: (e: unknown) => unknown) => Promise.resolve(result).then(r, e),
+      const result = {
+        data: override.updateError || override.updateZeroRows ? [] : [{ id: 'draft_empty' }],
+        error: override.updateError ?? null,
       };
+      const terminal: Record<string, unknown> = {};
+      terminal.eq = vi.fn(() => terminal);
+      terminal.select = vi.fn(() => terminal);
+      terminal.then = (r: (v: unknown) => unknown, e?: (e: unknown) => unknown) =>
+        Promise.resolve(result).then(r, e);
+      return terminal;
     });
     chain.then = (r: (v: unknown) => unknown, e?: (e: unknown) => unknown) =>
-      Promise.resolve({ data: rows, error: null }).then(r, e);
+      Promise.resolve({ data: override.listError ? null : rows, error: override.listError ?? null }).then(r, e);
     return chain;
   }
   return { supabase: { from: vi.fn((table: string) => makeChain(table)) } };
@@ -421,6 +425,75 @@ describe('draftFirstTouchReplyForLead', () => {
     expect(updatedDraft?.content).toBe(result.content);
     expect(updatedDraft?.status).toBe('sent');
     expect(updatedDraft?.status).not.toBe('pending');
+  });
+
+  it('fails closed when the sent-draft lookup errors — do not send a duplicate', async () => {
+    seedHappyPath();
+    tables.AgentDraft = { rows: [], listError: { message: 'connection timeout' } };
+    await expect(
+      draftFirstTouchReplyForLead({
+        spaceId: 's1',
+        contactId: 'c1',
+        replyText: 'Tue 11am',
+        now: new Date('2026-08-21T15:00:00Z'),
+      }),
+    ).rejects.toThrow(/Draft lookup failed/);
+    expect(sendSMS).not.toHaveBeenCalled();
+    expect(insertedDraft).toBeNull();
+  });
+
+  it('does not treat a tour-follow-up sourceDraftId as first-touch', async () => {
+    seedHappyPath([
+      {
+        id: 'd_tour',
+        content: 'Hey Sam, this is Jordan. How did 1422 Pine feel? Want to talk next steps?',
+        status: 'sent',
+        channel: 'sms',
+        reasoning: 'Tour-completed follow-up SMS — ask how the showing felt. Sent.',
+        createdAt: '2026-08-21T16:00:00.000Z',
+      },
+    ]);
+    const result = await draftFirstTouchReplyForLead({
+      spaceId: 's1',
+      contactId: 'c1',
+      replyText: 'it was great',
+      sourceDraftId: 'd_tour',
+    });
+    expect(result.action).toBe('skipped');
+    expect(result.reason).toBe('no_first_touch');
+    expect(result.sent).toBe(false);
+    expect(sendSMS).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the real first-touch when sourceDraftId is a different draft', async () => {
+    seedHappyPath([
+      {
+        id: 'd_tour',
+        content: 'Hey Sam, this is Jordan. How did 1422 Pine feel? Want to talk next steps?',
+        status: 'sent',
+        channel: 'sms',
+        reasoning: 'Tour-completed follow-up SMS — ask how the showing felt. Sent.',
+        createdAt: '2026-08-21T16:00:00.000Z',
+      },
+      {
+        id: 'd_first',
+        content: FIRST_TOUCH_BODY,
+        status: 'sent',
+        channel: 'sms',
+        reasoning: FIRST_TOUCH_REASON,
+        createdAt: '2026-08-21T14:00:00.000Z',
+      },
+    ]);
+    const result = await draftFirstTouchReplyForLead({
+      spaceId: 's1',
+      contactId: 'c1',
+      replyText: 'Tue 11am',
+      sourceDraftId: 'd_tour',
+      now: new Date('2026-08-21T16:30:00Z'),
+    });
+    expect(result.sent).toBe(true);
+    expect(result.picked).toBe('Tue 11am');
+    expect(sendSMS).toHaveBeenCalled();
   });
 
   it('never auto-sends an email inbound as an SMS', async () => {
