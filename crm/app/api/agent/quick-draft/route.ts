@@ -15,9 +15,9 @@
  *     read; no DB writes. 5s timeout. Returns { channel, subject?, body }.
  *
  *   • mode: 'send' — Caller provides the (possibly edited) subject + body
- *     they saw. Inserts an AgentDraft (status: pending), reuses the
- *     existing PATCH endpoint's logic via direct sendDraft + status flip.
- *     Returns the delivery result.
+ *     they saw. Fires sendDraft, then inserts an AgentDraft with a
+ *     terminal status (sent, or approved+failed). Never writes pending.
+ *     A failed send is an HTTP error.
  *
  * Why both on one route: the alternative is two new files for one feature.
  * Jobs would say one panel, one button, one endpoint. The mode discriminates;
@@ -30,6 +30,7 @@ import { supabase } from '@/lib/supabase';
 import { requireAuth } from '@/lib/api-auth';
 import { getSpaceForUser } from '@/lib/space';
 import { sendDraft, type DeliveryResult } from '@/lib/delivery';
+import { DRAFT_FAILED_SIGNAL } from '@/lib/draft-stats';
 import { audit } from '@/lib/audit';
 import { logger } from '@/lib/logger';
 import { enrichContext, type EnrichedContext } from '@/lib/ai-tools/context-enrichment';
@@ -323,36 +324,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'subject required for email' }, { status: 400 });
     }
 
-    // Insert an AgentDraft so the artifact exists in the same audit trail
-    // as agent-generated drafts. Approving it would normally go through
-    // PATCH /api/agent/drafts/[id], but we can't HTTP-call ourselves cleanly
-    // from server code — and the logic is small. We replicate it inline:
-    // insert pending → sendDraft → flip status. Same audit shape.
-    const now = new Date().toISOString();
-    const { data: inserted, error: insertError } = await supabase
-      .from('AgentDraft')
-      .insert({
-        spaceId: space.id,
-        contactId,
-        dealId,
-        channel: sendBody.channel,
-        subject: sendBody.channel === 'email' ? sendBody.subject!.trim() : null,
-        content: sendBody.body.trim(),
-        reasoning: `Quick draft from /chippi home (${sendBody.intent}).`,
-        priority: 0,
-        status: 'pending',
-      })
-      .select('id, channel, subject, content, contactId')
-      .single();
-
-    if (insertError || !inserted) {
-      logger.error('[quick-draft] insert failed', { err: insertError?.message });
-      return NextResponse.json({ error: 'Failed to create draft' }, { status: 500 });
-    }
-
-    const draftId = (inserted as { id: string }).id;
-
-    // Hydrate contact for delivery (needs email/phone).
+    // Hydrate contact for delivery (needs email/phone), then send, then
+    // persist a terminal row. Never write pending.
     let contact = { name: subjectLabel, email: null as string | null, phone: null as string | null };
     if (contactId) {
       const { data: row } = await supabase
@@ -371,15 +344,45 @@ export async function POST(req: NextRequest) {
       { spaceId: space.id, userId },
     );
 
-    const finalStatus = deliveryResult.sent ? 'sent' : 'approved';
-    const { error: patchError } = await supabase
+    const sent = deliveryResult.sent === true;
+    const now = new Date().toISOString();
+    const finalStatus = sent ? 'sent' : 'approved';
+    const insertRow: Record<string, unknown> = {
+      spaceId: space.id,
+      contactId,
+      dealId,
+      channel: sendBody.channel,
+      subject: sendBody.channel === 'email' ? sendBody.subject!.trim() : null,
+      content: sendBody.body.trim(),
+      reasoning: `Quick draft from /chippi home (${sendBody.intent}).`,
+      priority: 0,
+      status: finalStatus,
+      feedback_action: sent ? 'approved' : 'rejected',
+      edit_distance: 0,
+      updatedAt: now,
+    };
+    if (!sent) insertRow.outcome_signal = DRAFT_FAILED_SIGNAL;
+
+    const { data: inserted, error: insertError } = await supabase
       .from('AgentDraft')
-      .update({ status: finalStatus, updatedAt: now })
-      .eq('id', draftId)
-      .eq('spaceId', space.id);
-    if (patchError) {
-      logger.error('[quick-draft] status update failed', { err: patchError.message });
+      .insert(insertRow)
+      .select('id, channel, subject, content, contactId, status')
+      .single();
+
+    if (insertError || !inserted) {
+      logger.error('[quick-draft] insert failed', { err: insertError?.message });
+      if (sent) {
+        return NextResponse.json({
+          status: 'sent',
+          contactName: contact.name,
+          deliveryResult,
+          error: 'Message sent but draft row failed to persist',
+        });
+      }
+      return NextResponse.json({ error: 'Failed to create draft' }, { status: 500 });
     }
+
+    const draftId = (inserted as { id: string }).id;
 
     void audit({
       actorClerkId: userId,
@@ -393,14 +396,27 @@ export async function POST(req: NextRequest) {
         contextKind: sendBody.context,
         channel: sendBody.channel,
         finalStatus,
-        deliverySent: deliveryResult.sent,
+        deliverySent: sent,
         deliveryError: deliveryResult.error,
       },
     });
 
+    if (!sent) {
+      return NextResponse.json(
+        {
+          error: deliveryResult.error ?? 'Delivery failed',
+          id: draftId,
+          status: finalStatus,
+          contactName: contact.name,
+          deliveryResult,
+        },
+        { status: 502 },
+      );
+    }
+
     return NextResponse.json({
       id: draftId,
-      status: finalStatus,
+      status: 'sent',
       contactName: contact.name,
       deliveryResult,
     });

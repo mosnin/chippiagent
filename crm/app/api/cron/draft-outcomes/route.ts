@@ -4,6 +4,10 @@
  * Daily sweep that closes the feedback loop on sent AgentDrafts: did the
  * deal move after we sent the message?
  *
+ * Failed sends are recorded at write time (outcome_signal='failed') and
+ * are not candidates — they never went out. This cron only judges `sent`.
+ * There is no waiting-for-approval state.
+ *
  * Scans AgentDraft rows where:
  *   - status = 'sent'
  *   - outcome_signal IS NULL  (not yet labelled)

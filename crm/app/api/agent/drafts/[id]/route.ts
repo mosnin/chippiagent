@@ -145,14 +145,18 @@ export async function PATCH(
     { spaceId: space.id, userId },
   );
 
-  // sent=true → "sent"; sent=false → "approved" (human reviewed, delivery unconfigured/failed)
-  const finalStatus = deliveryResult.sent ? 'sent' : 'approved';
+  // sent=true → "sent". sent=false → "approved" + failed signal.
+  // Schema has no 'failed' status. A failed send is an HTTP error, never
+  // a pending success.
+  const sent = deliveryResult.sent === true;
+  const finalStatus = sent ? 'sent' : 'approved';
 
   const patch: Record<string, unknown> = {
     status: finalStatus,
     updatedAt: new Date().toISOString(),
   };
   if (finalContent !== existing.content) patch.content = finalContent;
+  if (!sent) patch.outcome_signal = 'failed';
 
   // Server-side feedback labelling. The client can pass editDistance, but the
   // action label ('approved' vs. 'edited_and_approved') is decided here so a
@@ -165,8 +169,10 @@ export async function PATCH(
   // 'edited_and_approved' on rows where the realtor literally just hit Approve.
   const serverEditDistance = normalizedLevenshtein(existing.content, finalContent);
   const contentChanged = serverEditDistance > 0;
-  patch.feedback_action = contentChanged ? 'edited_and_approved' : 'approved';
-  patch.edit_distance = contentChanged
+  patch.feedback_action = sent
+    ? (contentChanged ? 'edited_and_approved' : 'approved')
+    : 'rejected';
+  patch.edit_distance = sent && contentChanged
     ? (editDistance ?? serverEditDistance)
     : 0;
   if (decisionMs !== null) patch.decision_ms = decisionMs;
@@ -200,6 +206,16 @@ export async function PATCH(
     },
   });
 
-  // Return draft + delivery result so the client can show appropriate feedback
+  if (!sent) {
+    return NextResponse.json(
+      {
+        error: deliveryResult.error ?? 'Delivery failed',
+        ...updated,
+        deliveryResult,
+      },
+      { status: 502 },
+    );
+  }
+
   return NextResponse.json({ ...updated, deliveryResult });
 }

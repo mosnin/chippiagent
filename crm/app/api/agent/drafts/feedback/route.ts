@@ -5,19 +5,14 @@ import { getSpaceForUser } from '@/lib/space';
 import { LEVENSHTEIN_CAP } from '@/lib/draft-feedback';
 
 /**
- * Per-draft feedback ping that does NOT change a draft's terminal status.
+ * Per-draft feedback ping for leftover review-queue rows.
  *
- * The /[id] PATCH route handles the two cases that flip a draft's status —
- * 'approved' and 'dismissed'. Those carry feedback fields piggybacked.
+ * New writes never persist status=pending — creating a draft sends it.
+ * This endpoint still accepts `held` on leftover pending rows so an old
+ * inbox tap does not 500. It does not create a pending draft, and
+ * draft-stats does not count `held` as waiting-for-approval.
  *
- * This endpoint exists for the third case: the realtor sees a draft, taps
- * "Hold for later", and the draft stays pending. We still want the signal
- * — "this realtor wasn't ready to act on this" is data — but the draft's
- * lifecycle hasn't ended, so it shouldn't share the PATCH path.
- *
- * Scope: only 'held' is accepted here. 'approved' / 'edited_and_approved' /
- * 'rejected' all go through the main PATCH so the status update and the
- * signal land in one transaction.
+ * Terminal send/fail labels go through POST /api/agent/drafts or PATCH /[id].
  */
 export async function POST(req: NextRequest) {
   const authResult = await requireAuth();

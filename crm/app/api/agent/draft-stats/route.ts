@@ -12,16 +12,14 @@ import {
  * GET /api/agent/draft-stats
  *
  * Tells the realtor (and the agent itself) how its drafts have actually been
- * landing. Two layers of signal:
+ * landing. Creating a draft is a send. Two layers of signal:
  *
- *   - Input quality (Phase 12): `feedback_action`, `edit_distance`, `decision_ms`
- *     — did the realtor approve / edit / reject the draft. Lives in the
- *     `approved`/`editedAndApproved`/`rejected`/`held` counts and the rates
- *     derived from them.
- *   - Outcome attribution (Phase 13): `outcome_signal`, `outcome_checked_at`
- *     — for sent drafts, did the linked deal advance afterwards. Lives in
- *     `outcomeAdvancedRate` and `outcomeCheckedCount`. The cron at
- *     /api/cron/draft-outcomes labels each sent draft once.
+ *   - Delivery: `sent` / `failed` (and the legacy aliases `approved` /
+ *     `rejected`). Held / pending leftovers are not counted.
+ *   - Outcome attribution: `outcome_signal` on sent drafts — did the
+ *     linked deal advance afterwards. Lives in `outcomeAdvancedRate` and
+ *     `outcomeCheckedCount`. The cron at /api/cron/draft-outcomes labels
+ *     each sent draft once. Failed sends are marked at write time.
  *
  * `outcomeAdvancedRate` is a correlation, not causation. Read it as "share of
  * sent drafts where the deal moved within a week of sending" — useful as a
@@ -45,7 +43,7 @@ export async function GET() {
 
   const { data, error } = await supabase
     .from('AgentDraft')
-    .select('feedback_action, edit_distance, decision_ms, outcome_signal')
+    .select('feedback_action, edit_distance, decision_ms, outcome_signal, status')
     .eq('spaceId', space.id)
     .not('feedback_action', 'is', null)
     .gte('createdAt', draftStatsWindowStart());
