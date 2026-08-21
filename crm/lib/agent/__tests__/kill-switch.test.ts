@@ -1,14 +1,18 @@
 /**
  * Unit tests for lib/agent/kill-switch.ts
  *
+ * Default is run. The emergency stop is opt-in and off unless an active
+ * DisabledSpace row exists. Fail-open on lookup errors so a down DB cannot
+ * become a human-in-the-loop brake on normal Chippi runs.
+ *
  * Tests cover:
- *  - isSpaceDisabled() — space not disabled (null row) → false
- *  - isSpaceDisabled() — space disabled (row present) → true
+ *  - Default path — no row → isSpaceDisabled false, assertSpaceEnabled resolves
+ *  - Lookup error — fail open, autonomous execution continues
+ *  - Thrown lookup — fail open, autonomous execution continues
+ *  - Opt-in emergency stop — active row → isSpaceDisabled true, assert throws
  *  - Cache hit — DB called only once for repeated same-spaceId queries
  *  - Cache expiry — past-TTL second call re-queries DB
- *  - assertSpaceEnabled() — resolves without throwing when space is enabled
- *  - assertSpaceEnabled() — throws Error("space_disabled:<id>") when space is disabled
- *  - DB error — isSpaceDisabled() throws (the module propagates the error)
+ *  - Errors are not cached — a later successful lookup is not stuck
  *
  * Mock strategy:
  *  - vi.mock('@/lib/supabase') using a per-test configurable responder so each
@@ -23,25 +27,18 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 // We hoist the call-count and responder controls so the vi.mock factory can
 // capture them before any module imports are resolved.
 
-const { getMaybeSingleResponder, setMaybeSingleResponder, getCallCount, resetCallCount } =
-  vi.hoisted(() => {
-    let callCount = 0;
-    // Default: space not disabled
-    let responder: () => Promise<{ data: unknown; error: unknown }> = async () => ({
-      data: null,
-      error: null,
-    });
-    return {
-      getMaybeSingleResponder: () => responder,
-      setMaybeSingleResponder: (fn: typeof responder) => {
-        responder = fn;
-      },
-      getCallCount: () => callCount,
-      resetCallCount: () => {
-        callCount = 0;
-      },
-    };
+const { getMaybeSingleResponder, setMaybeSingleResponder } = vi.hoisted(() => {
+  let responder: () => Promise<{ data: unknown; error: unknown }> = async () => ({
+    data: null,
+    error: null,
   });
+  return {
+    getMaybeSingleResponder: () => responder,
+    setMaybeSingleResponder: (fn: typeof responder) => {
+      responder = fn;
+    },
+  };
+});
 
 vi.mock('@/lib/supabase', () => {
   function makeChain(): Record<string, unknown> {
@@ -94,7 +91,7 @@ function uniqueSpaceId(): string {
 beforeEach(() => {
   vi.clearAllMocks();
   resetDbCallCount();
-  // Default: space is not disabled
+  // Default: space is not disabled — autonomous execution.
   setMaybeSingleResponder(async () => ({ data: null, error: null }));
 });
 
@@ -102,147 +99,133 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-// ── isSpaceDisabled ───────────────────────────────────────────────────────────
+// ── Default path: autonomous execution ────────────────────────────────────────
 
-describe('isSpaceDisabled()', () => {
-  it('returns false when the DB returns null (space not in DisabledSpace table)', async () => {
-    setMaybeSingleResponder(async () => ({ data: null, error: null }));
+describe('default path is autonomous execution', () => {
+  it('isSpaceDisabled returns false when no DisabledSpace row exists', async () => {
     const spaceId = uniqueSpaceId();
-    const result = await isSpaceDisabled(spaceId);
-    expect(result).toBe(false);
+    await expect(isSpaceDisabled(spaceId)).resolves.toBe(false);
   });
 
-  it('returns true when the DB returns a row (space is disabled)', async () => {
+  it('assertSpaceEnabled resolves — Chippi runs without a human enabling the space', async () => {
+    const spaceId = uniqueSpaceId();
+    await expect(assertSpaceEnabled(spaceId)).resolves.toBeUndefined();
+  });
+
+  it('a lookup error does not block execution (fail open)', async () => {
+    setMaybeSingleResponder(async () => ({
+      data: null,
+      error: { message: 'connection refused' },
+    }));
+    const spaceId = uniqueSpaceId();
+
+    await expect(isSpaceDisabled(spaceId)).resolves.toBe(false);
+    await expect(assertSpaceEnabled(spaceId)).resolves.toBeUndefined();
+  });
+
+  it('a thrown lookup does not block execution (fail open)', async () => {
+    setMaybeSingleResponder(async () => {
+      throw new Error('network down');
+    });
+    const spaceId = uniqueSpaceId();
+
+    await expect(isSpaceDisabled(spaceId)).resolves.toBe(false);
+    await expect(assertSpaceEnabled(spaceId)).resolves.toBeUndefined();
+  });
+
+  it('lookup errors are not cached as a stop — a later success still runs', async () => {
+    setMaybeSingleResponder(async () => ({
+      data: null,
+      error: { message: 'connection refused' },
+    }));
+    const spaceId = uniqueSpaceId();
+    await expect(isSpaceDisabled(spaceId)).resolves.toBe(false);
+
+    setMaybeSingleResponder(async () => ({ data: null, error: null }));
+    await expect(assertSpaceEnabled(spaceId)).resolves.toBeUndefined();
+  });
+});
+
+// ── Opt-in emergency stop (not the happy path) ────────────────────────────────
+
+describe('opt-in emergency stop', () => {
+  it('isSpaceDisabled returns true only when an active DisabledSpace row exists', async () => {
     setMaybeSingleResponder(async () => ({ data: { id: 'row_1' }, error: null }));
     const spaceId = uniqueSpaceId();
-    const result = await isSpaceDisabled(spaceId);
-    expect(result).toBe(true);
+    await expect(isSpaceDisabled(spaceId)).resolves.toBe(true);
   });
 
+  it('assertSpaceEnabled throws space_disabled:<id> only for that opt-in stop', async () => {
+    setMaybeSingleResponder(async () => ({ data: { id: 'row_42' }, error: null }));
+    const spaceId = uniqueSpaceId();
+    await expect(assertSpaceEnabled(spaceId)).rejects.toThrow(`space_disabled:${spaceId}`);
+  });
+
+  it('thrown error message starts with "space_disabled:" and includes the spaceId', async () => {
+    setMaybeSingleResponder(async () => ({ data: { id: 'row_1' }, error: null }));
+    const spaceId = 'space_important_tenant_xyz';
+    await expect(assertSpaceEnabled(spaceId)).rejects.toThrow(/^space_disabled:/);
+    await expect(assertSpaceEnabled(spaceId)).rejects.toThrow(spaceId);
+  });
+});
+
+// ── Cache (successful lookups only) ───────────────────────────────────────────
+
+describe('isSpaceDisabled() cache', () => {
   it('queries the DB on first call for a spaceId', async () => {
-    setMaybeSingleResponder(async () => ({ data: null, error: null }));
     const spaceId = uniqueSpaceId();
     resetDbCallCount();
     await isSpaceDisabled(spaceId);
     expect(dbCallCount()).toBe(1);
   });
 
-  describe('cache hit', () => {
-    it('serves the second call from cache — DB queried only once', async () => {
-      setMaybeSingleResponder(async () => ({ data: null, error: null }));
-      const spaceId = uniqueSpaceId();
-      resetDbCallCount();
+  it('serves the second call from cache — DB queried only once', async () => {
+    const spaceId = uniqueSpaceId();
+    resetDbCallCount();
 
-      await isSpaceDisabled(spaceId);
-      await isSpaceDisabled(spaceId); // should hit cache
+    await isSpaceDisabled(spaceId);
+    await isSpaceDisabled(spaceId);
 
-      expect(dbCallCount()).toBe(1);
-    });
-
-    it('cached value matches the original DB result', async () => {
-      setMaybeSingleResponder(async () => ({ data: { id: 'row_1' }, error: null }));
-      const spaceId = uniqueSpaceId();
-
-      const first = await isSpaceDisabled(spaceId);
-      // Change the mock to return null — cache should still serve true
-      setMaybeSingleResponder(async () => ({ data: null, error: null }));
-      const second = await isSpaceDisabled(spaceId);
-
-      expect(first).toBe(true);
-      expect(second).toBe(true); // still from cache
-    });
+    expect(dbCallCount()).toBe(1);
   });
 
-  describe('cache expiry', () => {
-    it('re-queries the DB when the 30s TTL has elapsed', async () => {
-      const spaceId = uniqueSpaceId();
-      const realNow = Date.now();
+  it('cached value matches the original DB result', async () => {
+    setMaybeSingleResponder(async () => ({ data: { id: 'row_1' }, error: null }));
+    const spaceId = uniqueSpaceId();
 
-      // First call at t=0
-      const dateSpy = vi.spyOn(Date, 'now').mockReturnValue(realNow);
-      setMaybeSingleResponder(async () => ({ data: null, error: null }));
-      await isSpaceDisabled(spaceId);
-
-      // Advance clock past 30s TTL
-      dateSpy.mockReturnValue(realNow + 31_000);
-      resetDbCallCount();
-
-      // Second call should bypass expired cache and hit DB again
-      await isSpaceDisabled(spaceId);
-      expect(dbCallCount()).toBe(1);
-    });
-
-    it('does NOT re-query when clock advance is under 30s', async () => {
-      const spaceId = uniqueSpaceId();
-      const realNow = Date.now();
-
-      const dateSpy = vi.spyOn(Date, 'now').mockReturnValue(realNow);
-      setMaybeSingleResponder(async () => ({ data: null, error: null }));
-      await isSpaceDisabled(spaceId);
-
-      // Advance only 15s — cache still valid
-      dateSpy.mockReturnValue(realNow + 15_000);
-      resetDbCallCount();
-
-      await isSpaceDisabled(spaceId);
-      expect(dbCallCount()).toBe(0); // served from cache
-    });
-  });
-
-  describe('DB error', () => {
-    it('throws when the DB returns an error (kill-switch propagates DB errors)', async () => {
-      setMaybeSingleResponder(async () => ({
-        data: null,
-        error: { message: 'connection refused' },
-      }));
-      const spaceId = uniqueSpaceId();
-      await expect(isSpaceDisabled(spaceId)).rejects.toThrow(
-        'kill-switch: failed to query DisabledSpace: connection refused',
-      );
-    });
-  });
-});
-
-// ── assertSpaceEnabled ────────────────────────────────────────────────────────
-
-describe('assertSpaceEnabled()', () => {
-  it('resolves without throwing when the space is enabled (not disabled)', async () => {
+    const first = await isSpaceDisabled(spaceId);
     setMaybeSingleResponder(async () => ({ data: null, error: null }));
-    const spaceId = uniqueSpaceId();
-    await expect(assertSpaceEnabled(spaceId)).resolves.toBeUndefined();
+    const second = await isSpaceDisabled(spaceId);
+
+    expect(first).toBe(true);
+    expect(second).toBe(true);
   });
 
-  it('throws an Error with message starting "space_disabled:" when the space is disabled', async () => {
-    setMaybeSingleResponder(async () => ({ data: { id: 'row_42' }, error: null }));
+  it('re-queries the DB when the 30s TTL has elapsed', async () => {
     const spaceId = uniqueSpaceId();
-    await expect(assertSpaceEnabled(spaceId)).rejects.toThrow(
-      `space_disabled:${spaceId}`,
-    );
+    const realNow = Date.now();
+
+    const dateSpy = vi.spyOn(Date, 'now').mockReturnValue(realNow);
+    await isSpaceDisabled(spaceId);
+
+    dateSpy.mockReturnValue(realNow + 31_000);
+    resetDbCallCount();
+
+    await isSpaceDisabled(spaceId);
+    expect(dbCallCount()).toBe(1);
   });
 
-  it('thrown error message starts with "space_disabled:"', async () => {
-    setMaybeSingleResponder(async () => ({ data: { id: 'row_1' }, error: null }));
+  it('does NOT re-query when clock advance is under 30s', async () => {
     const spaceId = uniqueSpaceId();
-    let thrown: Error | null = null;
-    try {
-      await assertSpaceEnabled(spaceId);
-    } catch (err) {
-      thrown = err as Error;
-    }
-    expect(thrown).not.toBeNull();
-    expect(thrown!.message).toMatch(/^space_disabled:/);
-  });
+    const realNow = Date.now();
 
-  it('thrown error contains the spaceId', async () => {
-    setMaybeSingleResponder(async () => ({ data: { id: 'row_1' }, error: null }));
-    const spaceId = 'space_important_tenant_xyz';
-    setMaybeSingleResponder(async () => ({ data: { id: 'row_1' }, error: null }));
-    let thrown: Error | null = null;
-    try {
-      await assertSpaceEnabled(spaceId);
-    } catch (err) {
-      thrown = err as Error;
-    }
-    expect(thrown!.message).toContain(spaceId);
+    const dateSpy = vi.spyOn(Date, 'now').mockReturnValue(realNow);
+    await isSpaceDisabled(spaceId);
+
+    dateSpy.mockReturnValue(realNow + 15_000);
+    resetDbCallCount();
+
+    await isSpaceDisabled(spaceId);
+    expect(dbCallCount()).toBe(0);
   });
 });
