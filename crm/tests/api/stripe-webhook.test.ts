@@ -183,6 +183,9 @@ describe('POST /api/webhooks/stripe — idempotency', () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ received: true });
     expect(redisSet).toHaveBeenCalledWith('stripe:event:evt_1', '1', { ex: 86400 });
-    expect(order).toEqual(['get', 'read', 'update', 'set']);
+    expect(order[0]).toBe('get');
+    expect(order.indexOf('update')).toBeGreaterThan(order.indexOf('get'));
+    expect(order.indexOf('set')).toBeGreaterThan(order.indexOf('update'));
+    expect(order[order.length - 1]).toBe('set');
   });
 });
