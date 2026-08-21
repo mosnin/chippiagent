@@ -1,12 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest, NextResponse } from 'next/server';
 
-const fireAgentTrigger = vi.fn();
-const sendSMS = vi.fn();
-const requireAuth = vi.fn();
-const getSpaceForUser = vi.fn();
-const sendTourFollowUp = vi.fn();
-const inserts: Array<{ table: string; row: Record<string, unknown> }> = [];
+const { fireAgentTrigger, sendSMS, requireAuth, getSpaceForUser, sendTourFollowUp, inserts } =
+  vi.hoisted(() => ({
+    fireAgentTrigger: vi.fn(),
+    sendSMS: vi.fn(),
+    requireAuth: vi.fn(),
+    getSpaceForUser: vi.fn(),
+    sendTourFollowUp: vi.fn(),
+    inserts: [] as Array<{ table: string; row: Record<string, unknown> }>,
+  }));
 
 const existingTour = {
   id: 't1',

@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const fireAgentTrigger = vi.fn(async () => ({ queued: true }));
-const sendSMS = vi.fn(async () => true);
+const { fireAgentTrigger, sendSMS } = vi.hoisted(() => ({
+  fireAgentTrigger: vi.fn(async () => ({ queued: true })),
+  sendSMS: vi.fn(async () => true),
+}));
 
 let mockByTable: Record<
   string,

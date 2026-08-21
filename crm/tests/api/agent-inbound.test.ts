@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
-const fireAgentTrigger = vi.fn();
-const sendSMS = vi.fn();
-const inserts: Array<{ table: string; row: Record<string, unknown> }> = [];
+const { fireAgentTrigger, sendSMS, inserts } = vi.hoisted(() => ({
+  fireAgentTrigger: vi.fn(),
+  sendSMS: vi.fn(),
+  inserts: [] as Array<{ table: string; row: Record<string, unknown> }>,
+}));
 
 vi.mock('@/lib/agent/fire-trigger', () => ({ fireAgentTrigger }));
 vi.mock('@/lib/sms', () => ({ sendSMS }));
