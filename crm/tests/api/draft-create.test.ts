@@ -6,7 +6,7 @@
  * success).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
 interface TableMock {
   single?: Record<string, unknown> | null;
@@ -75,16 +75,16 @@ vi.mock('@/lib/delivery', () => ({ sendDraft: sendDraftMock }));
 import { GET, POST } from '@/app/api/agent/drafts/route';
 import { requireAuth } from '@/lib/api-auth';
 
-function makePost(body: Record<string, unknown>): Request {
-  return new Request('http://localhost/api/agent/drafts', {
+function makePost(body: Record<string, unknown>): NextRequest {
+  return new NextRequest('http://localhost/api/agent/drafts', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
 }
 
-function makeGet(query = ''): Request {
-  return new Request(`http://localhost/api/agent/drafts${query}`, { method: 'GET' });
+function makeGet(query = ''): NextRequest {
+  return new NextRequest(`http://localhost/api/agent/drafts${query}`, { method: 'GET' });
 }
 
 beforeEach(() => {
@@ -99,7 +99,7 @@ beforeEach(() => {
 describe('GET /api/agent/drafts', () => {
   it('defaults the status filter to sent, not pending', async () => {
     mockByTable.AgentDraft = { rows: [] };
-    const res = await GET(makeGet() as never);
+    const res = await GET(makeGet());
     expect(res.status).toBe(200);
     expect(lastEqCalls.some((c) => c.table === 'AgentDraft' && c.col === 'status' && c.val === 'sent')).toBe(true);
     expect(lastEqCalls.some((c) => c.col === 'status' && c.val === 'pending')).toBe(false);
@@ -108,7 +108,7 @@ describe('GET /api/agent/drafts', () => {
   it('auth fail → unchanged NextResponse', async () => {
     const unauthorized = NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     vi.mocked(requireAuth).mockResolvedValue(unauthorized);
-    const res = await GET(makeGet() as never);
+    const res = await GET(makeGet());
     expect(res).toBe(unauthorized);
   });
 });
