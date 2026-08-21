@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import {
   Brain,
@@ -61,6 +61,15 @@ export function isAgentContactDataCurrent(
   contactId: string,
 ): boolean {
   return data !== null && data.contactId === contactId;
+}
+
+/** Drop a fetch that started for a different contact than the one now on screen. */
+export function shouldApplyContactPayload(
+  data: { contactId: string } | null,
+  requestedId: string,
+  currentId: string,
+): boolean {
+  return requestedId === currentId && isAgentContactDataCurrent(data, requestedId);
 }
 
 const CHANNEL_PILL: Record<string, string> = {
@@ -197,20 +206,24 @@ export function AgentContactPanel({ contactId, slug, contactName }: { contactId:
   const [triggering, setTriggering] = useState(false);
   const [triggered, setTriggered] = useState(false);
   const [activeSection, setActiveSection] = useState<'drafts' | 'memories' | 'activity'>('drafts');
+  const contactIdRef = useRef(contactId);
+  contactIdRef.current = contactId;
 
   const load = useCallback(async (signal?: AbortSignal) => {
+    const requestedId = contactId;
     try {
-      const res = await fetch(`/api/agent/contact/${contactId}`, { signal });
+      const res = await fetch(`/api/agent/contact/${requestedId}`, { signal });
       if (!res.ok) return;
       const json = (await res.json()) as AgentContactData;
       if (signal?.aborted) return;
-      if (!isAgentContactDataCurrent(json, contactId)) return;
+      // A refresh started on Alice must not land after the realtor opened Bob.
+      if (!shouldApplyContactPayload(json, requestedId, contactIdRef.current)) return;
       setData(json);
     } catch (err) {
       if ((err as { name?: string })?.name === 'AbortError') return;
       // silently fail — panel is not critical path
     } finally {
-      if (!signal?.aborted) setLoading(false);
+      if (!signal?.aborted && contactIdRef.current === requestedId) setLoading(false);
     }
   }, [contactId]);
 
