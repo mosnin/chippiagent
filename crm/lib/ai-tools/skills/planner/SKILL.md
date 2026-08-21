@@ -14,7 +14,7 @@ have to happen, in the order their dependencies force. Then call `create_plan`
 exactly once with the full task and an ordered list of 3-7 steps.
 
 Each step:
-- Title — verb-led, six words or fewer. "Find the quiet leads." "Draft the
+- Title — verb-led, six words or fewer. "Find the quiet leads." "Send the
   check-ins." Not "Step one" or "Research."
 - Description — one sentence, specific to THIS task. Name the actual filter,
   the actual people, the actual output: "Pull every lead with no contact in
