@@ -6,11 +6,19 @@ Use this to understand what changed, when, and why — so fixes don't conflict w
 
 ---
 
+## 2026-08-21
+
+### Documentation
+
+- **Docs: Chippi is autonomous** — Product docs no longer describe human-in-the-loop, draft-for-approval, or pending-review gates. Chippi sends follow-up and writes CRM records. See `docs/AI_AGENT_SPEC.md`.
+
+---
+
 ## 2026-04-24
 
 ### Documentation
 
-- **Docs: canonical AI agent reference** — Added `docs/AI_AGENT_SPEC.md` as the single source of truth for the on-demand agent: tool-use loop, SSE protocol, approval gates, sub-agents, and the [tools.usage] observability contract (`cc1f11d`).
+- **Docs: canonical AI agent reference** — Added `docs/AI_AGENT_SPEC.md` as the single source of truth for the on-demand agent: tool-use loop, SSE protocol, in-stream tool execution, sub-agents, and the [tools.usage] observability contract (`cc1f11d`).
 - **Docs: Brokerage feature spec** — Landed `docs/BROKERAGE_SPEC.md` in four chunks covering concepts + permissions + data model, feature map for BP1–BP7 and linear steps 1–3, and the full route inventory + audit-logging notes (`b680f91`, `02e2b5b`, `14cedb5`, `491a103`).
 - **Docs: repo truth pass** — Reconciled stale claims across `README.md`, `AGENTS.md`, `API_CONTRACTS.md`, `SECURITY.md`, `ENVIRONMENT.md`, `TESTING.md`, and `ARCHITECTURE.md` so the root docs match what actually ships (`e9a2c1a`).
 
@@ -23,10 +31,10 @@ Use this to understand what changed, when, and why — so fixes don't conflict w
 Replaced the legacy `/api/ai/chat` stub with a real tool-using agent shipped in seven phases. See `docs/AI_AGENT_SPEC.md` for the full contract.
 
 - **Phase 1 — foundations** — Tool registry + zod schemas + auth context (`7ae3b06`), typed SSE event protocol (`43eaad4`), first `search_contacts` tool (`9083ee1`), `Message.blocks` column + block types (`e376ab0`), zod → OpenAI tool-format converter (`2e33e9f`), `executeTool()` orchestration (`660feb4`), and system prompt + message persistence (`d8857d8`).
-- **Phase 2 — streaming loop** — `/api/ai/task` streaming endpoint (`4b9a8f9`), three more read-only tools (`98357a9`), loop pauses at mutating tools (`547624a`), and multi-parallel-tool-call coverage (`465d6f0`).
-- **Phase 3 — approval gates** — Redis-backed pending-approval store (`bb81163`), `/approve` endpoint + `continueTurn()` resume (`08dd0f4`), `send_email` tool wired end-to-end (`708739f`), plus audit fixes (`fa0edbb`).
-- **Phase 4 — chat UI** — Block renderers + Transcript orchestrator (`3beb6ab`), ChatInterface wired onto `/api/ai/task` (`a23aefb`), always-allow-for-this-chat auto approval (`ff37a06`), immediate denial block on Deny (`9d395f7`), and audit fixes (`c1f8926`).
-- **Phase 5 — tool catalogue expansion** — Added six new mutating tools to the catalogue (`d7dd474`).
+- **Phase 2 — streaming loop** — `/api/ai/task` streaming endpoint (`4b9a8f9`), three more read-only tools (`98357a9`), tool-use loop that keeps the stream open through write/send calls (`547624a`), and multi-parallel-tool-call coverage (`465d6f0`).
+- **Phase 3 — send path** — First mutating tool (`send_email`) wired end-to-end so Chippi sends (`708739f`), plus audit fixes (`fa0edbb`).
+- **Phase 4 — chat UI** — Block renderers + Transcript orchestrator (`3beb6ab`), ChatInterface wired onto `/api/ai/task` (`a23aefb`), sent-action blocks in the transcript (`9d395f7`), and audit fixes (`c1f8926`).
+- **Phase 5 — tool catalogue expansion** — Added six new write/send tools to the catalogue (`d7dd474`).
 - **Phase 6 — hardening** — Per-tool `summariseCall` + rateLimit + `[tools.usage]` observability + dead-code purge (`4ff6a77`), with a normalised log shape across success/error/abort (`90dc260`).
 - **Phase 7 — sub-agents** — Skill pattern plus `contact_researcher`, `pipeline_analyst`, and the `delegate_to_subagent` tool for context-rot prevention (`bd709db`).
 - **Post-phase audits** — Two more rounds closing the remaining phase-7 + e2e UX audit items (`95ba883`, `c770d0b`).
@@ -57,7 +65,7 @@ Broker-side features delivered in seven phases. See `docs/BROKERAGE_SPEC.md` for
 - **Feature: Contacts UX parity** — Mobile controls, skeleton parity, and context-aware empty states (`49e0c6e`).
 - **Feature: Kanban drop-zone affordance** — Deal board drop-zone cue plus actionable error toasts (`6fe9e83`).
 - **Fix: Inline-edit error toasts** — Deal inline-edit fields surface actionable error toasts on failure (`9670438`).
-- **Feature: Permission prompt human preview** — Approval blocks now render human-readable previews for each mutating tool call (part of the phase 6 hardening in `4ff6a77`).
+- **Feature: Tool-call human preview** — Transcript blocks render a one-line preview of what each write/send tool did (part of the phase 6 hardening in `4ff6a77`).
 
 ---
 
