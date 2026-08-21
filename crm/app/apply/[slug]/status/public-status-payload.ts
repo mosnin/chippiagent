@@ -11,11 +11,12 @@ import type { IntakeFormConfig, ApplicationData } from '@/lib/types';
  */
 
 export const PUBLIC_STATUS_CONTACT_COLUMNS =
-  'id, name, applicationStatus, applicationStatusNote, applicationRef, createdAt';
+  'id, name, applicationStatus, applicationStatusNote, applicationRef, createdAt' as const;
 
-export const PORTAL_STATUS_CONTACT_COLUMNS = `${PUBLIC_STATUS_CONTACT_COLUMNS}, applicationData, formConfigSnapshot`;
+export const PORTAL_STATUS_CONTACT_COLUMNS =
+  'id, name, applicationStatus, applicationStatusNote, applicationRef, createdAt, applicationData, formConfigSnapshot' as const;
 
-export function statusContactColumns(hasToken: boolean): string {
+export function statusContactColumns(hasToken: boolean) {
   return hasToken ? PORTAL_STATUS_CONTACT_COLUMNS : PUBLIC_STATUS_CONTACT_COLUMNS;
 }
 

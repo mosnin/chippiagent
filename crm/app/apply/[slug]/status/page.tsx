@@ -3,7 +3,11 @@ import { supabase } from '@/lib/supabase';
 import { getSpaceFromSlug } from '@/lib/space';
 import { ApplicationStatusClient } from './application-status-client';
 import { PublicPageMinimalShell } from '@/components/public-page-shell';
-import { statusContactColumns, toPublicStatusContact } from './public-status-payload';
+import {
+  PORTAL_STATUS_CONTACT_COLUMNS,
+  PUBLIC_STATUS_CONTACT_COLUMNS,
+  toPublicStatusContact,
+} from './public-status-payload';
 
 // Disable caching so status updates show immediately
 export const dynamic = 'force-dynamic';
@@ -88,18 +92,22 @@ export default async function ApplicationStatusPage({
   // Token-less confirmation links are still valid for a name+status view.
   // Do not SELECT application answers unless the portal token is present —
   // those fields must never enter the RSC payload on a public URL.
-  let query = supabase
-    .from('Contact')
-    .select(statusContactColumns(!!token))
-    .eq('applicationRef', ref)
-    .eq('spaceId', space.id);
-
-  // If token provided, enforce it must match (defense in depth)
-  if (token) {
-    query = query.eq('statusPortalToken', token);
-  }
-
-  const { data: contact } = await query.maybeSingle();
+  // Two queries (literal select strings) so supabase-js can type the row;
+  // a computed select string collapses to GenericStringError.
+  const { data: contact } = token
+    ? await supabase
+        .from('Contact')
+        .select(PORTAL_STATUS_CONTACT_COLUMNS)
+        .eq('applicationRef', ref)
+        .eq('spaceId', space.id)
+        .eq('statusPortalToken', token)
+        .maybeSingle()
+    : await supabase
+        .from('Contact')
+        .select(PUBLIC_STATUS_CONTACT_COLUMNS)
+        .eq('applicationRef', ref)
+        .eq('spaceId', space.id)
+        .maybeSingle();
 
   // Show a helpful, branded error page instead of generic 404
   if (!contact) {
