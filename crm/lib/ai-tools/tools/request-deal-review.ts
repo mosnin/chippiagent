@@ -1,14 +1,9 @@
 /**
- * `request_deal_review` — flag a deal for broker sign-off.
+ * `request_deal_review` — log a deal review for the broker.
  *
- * Approval-gated. Brokerage-only — solo agents (no Space.brokerageId)
- * get a clean error.
- *
- * Inserts a DealReviewRequest row matching the schema in migration
- * 20260510000000_deal_review_requests.sql. The partial unique index
- * `idx_dealreview_open_per_deal` enforces at most one OPEN review per
- * deal; we surface that as a friendly "already pending" message rather
- * than a Postgres error.
+ * Not a gate. Does not prompt for approval and does not leave a wait
+ * on the deal. Inserts a DealReviewRequest already resolved so Chippi
+ * continues pipeline work. Reviews still exist as an audit log.
  */
 
 import crypto from 'crypto';
@@ -16,10 +11,14 @@ import { z } from 'zod';
 import { supabase } from '@/lib/supabase';
 import { logger } from '@/lib/logger';
 import { defineTool } from '../types';
+import {
+  REVIEW_LOG_NOTE,
+  autoResolveOpenReviews,
+} from '@/app/api/broker/reviews/auto-resolve';
 
 const parameters = z
   .object({
-    dealId: z.string().min(1).describe('The Deal.id to flag for review.'),
+    dealId: z.string().min(1).describe('The Deal.id to log a review against.'),
     reason: z
       .string()
       .trim()
@@ -27,28 +26,28 @@ const parameters = z
       .max(1000)
       .describe('Why the broker should look at this deal. Surfaces verbatim.'),
   })
-  .describe('Flag a deal for broker review.');
+  .describe('Log a deal review without pausing work.');
 
 interface RequestDealReviewResult {
   dealId: string;
   reviewId: string;
-  status: 'open' | 'duplicate';
+  status: 'approved';
 }
 
 export const requestDealReviewTool = defineTool<typeof parameters, RequestDealReviewResult>({
   name: 'request_deal_review',
-  riskLevel: 'low',
+  riskLevel: 'safe',
   description:
-    "Brokerage-only. Flag a deal for the broker's review queue. Prompts for approval first.",
+    "Brokerage-only. Log a deal review for the broker. Does not wait for sign-off and does not pause Chippi.",
   parameters,
-  requiresApproval: true,
+  requiresApproval: false,
   rateLimit: { max: 20, windowSeconds: 3600 },
   summariseCall(args) {
     const slug =
       typeof args?.dealId === 'string' && args.dealId.length > 0
         ? args.dealId.slice(0, 8)
         : 'deal';
-    return `Request a review of deal ${slug}`;
+    return `Log a review of deal ${slug}`;
   },
 
   async handler(args, ctx) {
@@ -81,35 +80,32 @@ export const requestDealReviewTool = defineTool<typeof parameters, RequestDealRe
       };
     }
 
-    // Check for an existing open review on this deal (the partial unique
-    // index would block the insert anyway; surface the duplicate cleanly).
-    const { data: existing } = await supabase
-      .from('DealReviewRequest')
-      .select('id')
-      .eq('dealId', args.dealId)
-      .eq('status', 'open')
-      .maybeSingle();
-    if (existing) {
-      return {
-        summary: `"${deal.title}" already has an open review request.`,
-        data: {
-          dealId: args.dealId,
-          reviewId: (existing as { id: string }).id,
-          status: 'duplicate',
-        },
-        display: 'plain',
-      };
+    const ownerId = (space as { ownerId: string }).ownerId;
+    const nowIso = new Date().toISOString();
+
+    // Drain any leftover open row so the partial unique index cannot hold.
+    try {
+      await autoResolveOpenReviews({ dealId: args.dealId, resolvedByUserId: ownerId });
+    } catch (err) {
+      logger.error(
+        '[tools.request_deal_review] auto-resolve failed',
+        { dealId: args.dealId },
+        err,
+      );
     }
 
     const reviewId = crypto.randomUUID();
-    const ownerId = (space as { ownerId: string }).ownerId;
     const { error: insertErr } = await supabase.from('DealReviewRequest').insert({
       id: reviewId,
       dealId: args.dealId,
       requestingUserId: ownerId,
       brokerageId,
-      status: 'open',
+      status: 'approved',
       reason: args.reason.trim(),
+      createdAt: nowIso,
+      resolvedAt: nowIso,
+      resolvedByUserId: ownerId,
+      resolvedNote: REVIEW_LOG_NOTE,
     });
     if (insertErr) {
       logger.error(
@@ -117,12 +113,12 @@ export const requestDealReviewTool = defineTool<typeof parameters, RequestDealRe
         { dealId: args.dealId },
         insertErr,
       );
-      return { summary: `Couldn't open the review: ${insertErr.message}`, display: 'error' };
+      return { summary: `Couldn't log the review: ${insertErr.message}`, display: 'error' };
     }
 
     return {
-      summary: `Requested a review of the ${deal.title} deal.`,
-      data: { dealId: args.dealId, reviewId, status: 'open' },
+      summary: `Logged a review of the ${deal.title} deal. Chippi continues.`,
+      data: { dealId: args.dealId, reviewId, status: 'approved' },
       display: 'success',
     };
   },

@@ -90,7 +90,7 @@ const statusLabel = (status: ReviewStatus): string =>
 // ── Component ────────────────────────────────────────────────────────────────
 
 export function ReviewsClient({ slug, initialReviews }: Props) {
-  const [tab, setTab] = useState<Tab>('open');
+  const [tab, setTab] = useState<Tab>('all');
 
   const filtered = useMemo(() => {
     if (tab === 'all') return initialReviews;
@@ -110,7 +110,7 @@ export function ReviewsClient({ slug, initialReviews }: Props) {
 
   const emptyCopy = (t: Tab): string => {
     if (t === 'open') {
-      return 'No reviews in flight. Flag a deal for broker review from the deal page when you want a second set of eyes.';
+      return 'Nothing waiting. Flags log for your broker. Chippi keeps moving.';
     }
     if (t === 'resolved') {
       return 'Nothing resolved yet.';

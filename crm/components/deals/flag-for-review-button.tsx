@@ -22,12 +22,10 @@ const MAX_REASON_LEN = 2000;
 
 export interface FlagForReviewButtonProps {
   dealId: string;
-  /** Current open review if one exists — if truthy, the button changes
-   *  to a disabled "Review pending" chip instead of the active flag
-   *  button. Parent is responsible for fetching/passing this state. */
+  /** Ignored. An open review is a leftover wait — it must not disable
+   *  this button or pause the deal. Kept so callers do not break. */
   hasOpenReview?: boolean;
-  /** Called after a successful flag so the parent can refetch or update
-   *  the deal's UI (e.g. re-enable this button when the review resolves). */
+  /** Called after a successful flag so the parent can refetch. */
   onFlagged?: () => void;
   /** When the deal is NOT in a brokerage workspace, pass false to hide
    *  the affordance entirely. Parent knows (Space.brokerageId). */
@@ -38,10 +36,11 @@ type ReviewRequestError = { error?: string };
 
 export function FlagForReviewButton({
   dealId,
-  hasOpenReview = false,
+  hasOpenReview: _hasOpenReview = false,
   onFlagged,
   visible = true,
 }: FlagForReviewButtonProps) {
+  void _hasOpenReview;
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState('');
@@ -49,29 +48,6 @@ export function FlagForReviewButton({
   const [inlineError, setInlineError] = useState<string | null>(null);
 
   if (!visible) return null;
-
-  if (hasOpenReview) {
-    // Clickable — calls router.refresh() so the agent can pull the latest
-    // server state. Without this, the chip stays "Review pending" even
-    // after the broker resolves (server components re-render on navigation,
-    // but the agent has no in-app reason to navigate and no real-time
-    // subscription tells them to). Worst case: click does nothing visible
-    // because the review is still open.
-    return (
-      <button
-        type="button"
-        onClick={() => router.refresh()}
-        className={cn(
-          'inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/50',
-          'px-2.5 h-8 text-xs font-medium text-muted-foreground hover:bg-muted transition-colors',
-        )}
-        title="Your broker is reviewing this deal. Click to check for updates."
-      >
-        <Flag size={13} className="text-muted-foreground" />
-        Review pending
-      </button>
-    );
-  }
 
   const trimmed = reason.trim();
   const reasonLen = reason.length;
@@ -81,7 +57,6 @@ export function FlagForReviewButton({
     if (submitting) return;
     setOpen(next);
     if (!next) {
-      // reset state on close
       setReason('');
       setInlineError(null);
     }
@@ -100,16 +75,13 @@ export function FlagForReviewButton({
       });
 
       if (res.status === 201) {
-        toast.success('Sent to your broker.');
+        toast.success('Logged. Chippi continues.');
         setOpen(false);
         setReason('');
         setInlineError(null);
         if (onFlagged) {
           onFlagged();
         } else {
-          // Default: refresh the current route so server-fetched state
-          // (e.g. hasOpenReview) updates and this button flips to the
-          // "Review pending" chip.
           router.refresh();
         }
         return;
@@ -124,18 +96,10 @@ export function FlagForReviewButton({
       const errMsg = body.error ?? "That tripped me up. Try again.";
 
       if (res.status === 409) {
-        if (errMsg.includes('already has an open review')) {
-          toast.message('Already flagged — your broker is reviewing.');
-        } else {
-          toast.error(errMsg);
-        }
-        setOpen(false);
-        setReason('');
-        setInlineError(null);
+        setInlineError(errMsg);
         return;
       }
 
-      // 400 or anything else → inline error
       setInlineError(errMsg);
     } catch {
       setInlineError('Network error — please try again.');
@@ -151,7 +115,7 @@ export function FlagForReviewButton({
           variant="outline"
           size="sm"
           className="h-8 gap-1.5 text-xs font-medium"
-          aria-label="Flag this deal for broker review"
+          aria-label="Log this deal for broker review"
         >
           <Flag size={13} />
           Flag for review
@@ -160,23 +124,20 @@ export function FlagForReviewButton({
       <DialogContent>
         <form onSubmit={handleSubmit}>
           <DialogHeader>
-            <DialogTitle>Flag this deal for broker review</DialogTitle>
+            <DialogTitle>Log this deal for your broker</DialogTitle>
             <DialogDescription>
-              Write a short note for your broker. They&apos;ll see this on
-              {' '}
-              <span className="font-mono text-xs">/broker/reviews</span>
-              {' '}
-              and can comment, approve, or close the request.
+              Writes a note to the review log. Chippi does not wait
+              and the deal stays in motion.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-2 py-4">
-            <Label htmlFor="flag-reason">Why this deal needs review</Label>
+            <Label htmlFor="flag-reason">What your broker should see</Label>
             <Textarea
               id="flag-reason"
               value={reason}
               onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setReason(e.target.value)}
-              placeholder="Briefly describe what you'd like your broker to look at…"
+              placeholder="Briefly describe what you'd like your broker to see…"
               rows={5}
               maxLength={MAX_REASON_LEN}
               required
@@ -214,7 +175,7 @@ export function FlagForReviewButton({
               Cancel
             </Button>
             <Button type="submit" disabled={!canSubmit}>
-              {submitting ? 'Sending…' : 'Send to broker'}
+              {submitting ? 'Logging…' : 'Log for broker'}
             </Button>
           </DialogFooter>
         </form>

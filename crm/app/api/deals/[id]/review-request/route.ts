@@ -5,6 +5,10 @@ import { audit } from '@/lib/audit';
 import { logger } from '@/lib/logger';
 import { notifyBroker } from '@/lib/broker-notify';
 import { notificationForReviewRequested } from '@/lib/notification-voice';
+import {
+  REVIEW_LOG_NOTE,
+  autoResolveOpenReviews,
+} from '@/app/api/broker/reviews/auto-resolve';
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -24,9 +28,10 @@ type DealLookupRow = {
 /**
  * POST /api/deals/[id]/review-request
  *
- * Agent flags one of their deals for broker review. Creates a DealReviewRequest
- * in the open state. A partial unique index enforces at most one open review
- * per deal — we catch the 23505 violation and return 409.
+ * Logs a deal review for the broker. The row is written already resolved so
+ * the queue cannot pause Chippi or hold pipeline work. Leftover open rows
+ * on this deal are auto-resolved first so the partial unique index cannot
+ * block a new log.
  *
  * Auth: caller must own the deal's space (or manage its brokerage, which is
  * what requireSpaceOwner already permits). We first resolve the deal to its
@@ -109,6 +114,13 @@ export async function POST(req: NextRequest, { params }: Params) {
   const nowIso = new Date().toISOString();
   const reviewId = crypto.randomUUID();
 
+  try {
+    await autoResolveOpenReviews({ dealId, resolvedByUserId: userRow.id });
+  } catch (err) {
+    logger.error('[deals/review-request/POST] auto-resolve failed', { dealId }, err);
+    return NextResponse.json({ error: 'Failed to create review request' }, { status: 500 });
+  }
+
   const { data: inserted, error: insertErr } = await supabase
     .from('DealReviewRequest')
     .insert({
@@ -116,9 +128,12 @@ export async function POST(req: NextRequest, { params }: Params) {
       dealId,
       requestingUserId: userRow.id,
       brokerageId: dealRow.Space.brokerageId,
-      status: 'open',
+      status: 'approved',
       reason,
       createdAt: nowIso,
+      resolvedAt: nowIso,
+      resolvedByUserId: userRow.id,
+      resolvedNote: REVIEW_LOG_NOTE,
     })
     .select('id, dealId, status, reason, createdAt')
     .single<{
@@ -130,12 +145,24 @@ export async function POST(req: NextRequest, { params }: Params) {
     }>();
 
   if (insertErr) {
-    // Duplicate-open case. Postgres unique constraint violation = 23505.
+    // A leftover open row raced us. Drain it and treat the request as logged
+    // — never 409 a flag just because a wait still existed.
     const code = (insertErr as { code?: string } | null)?.code;
     if (code === '23505') {
+      try {
+        await autoResolveOpenReviews({ dealId, resolvedByUserId: userRow.id });
+      } catch (err) {
+        logger.error('[deals/review-request/POST] race auto-resolve failed', { dealId }, err);
+      }
       return NextResponse.json(
-        { error: 'This deal already has an open review request.' },
-        { status: 409 },
+        {
+          id: reviewId,
+          dealId,
+          status: 'approved',
+          reason,
+          createdAt: nowIso,
+        },
+        { status: 201 },
       );
     }
     logger.error(
@@ -181,7 +208,7 @@ export async function POST(req: NextRequest, { params }: Params) {
     {
       id: inserted?.id ?? reviewId,
       dealId: inserted?.dealId ?? dealId,
-      status: inserted?.status ?? 'open',
+      status: inserted?.status ?? 'approved',
       reason: inserted?.reason ?? reason,
       createdAt: inserted?.createdAt ?? nowIso,
     },

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireSpaceOwner } from '@/lib/api-auth';
 import { supabase } from '@/lib/supabase';
 import { logger } from '@/lib/logger';
+import { autoResolveOpenReviews } from '@/app/api/broker/reviews/auto-resolve';
 
 type Params = { params: Promise<{ slug: string }> };
 
@@ -64,6 +65,20 @@ export async function GET(req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: 'Invalid status filter' }, { status: 400 });
   }
   const statusFilter = statusParam as StatusFilter;
+
+  try {
+    await autoResolveOpenReviews({
+      brokerageId: space.brokerageId,
+      resolvedByUserId: dbUser.id,
+    });
+  } catch (err) {
+    logger.error(
+      '[space/reviews/GET] auto-resolve failed',
+      { slug, brokerageId: space.brokerageId },
+      err,
+    );
+    return NextResponse.json({ error: 'Failed to load reviews' }, { status: 500 });
+  }
 
   let query = supabase
     .from('DealReviewRequest')

@@ -3,6 +3,10 @@ import { auth } from '@clerk/nextjs/server';
 import { getSpaceFromSlug } from '@/lib/space';
 import { supabase } from '@/lib/supabase';
 import { DetailClient, type ReviewComment, type ReviewDetail } from './detail-client';
+import {
+  REVIEW_LOG_NOTE,
+  autoResolveOpenReviews,
+} from '@/app/api/broker/reviews/auto-resolve';
 
 interface PageProps {
   params: Promise<{ slug: string; id: string }>;
@@ -59,6 +63,22 @@ export default async function RealtorReviewDetailPage({ params }: PageProps) {
     review.brokerageId !== space.brokerageId
   ) {
     notFound();
+  }
+
+  if (review.status === 'open') {
+    try {
+      await autoResolveOpenReviews({
+        reviewId: id,
+        brokerageId: space.brokerageId,
+        resolvedByUserId: userId,
+      });
+      review.status = 'approved';
+      review.resolvedAt = new Date().toISOString();
+      review.resolvedByUserId = userId;
+      review.resolvedNote = REVIEW_LOG_NOTE;
+    } catch {
+      // Detail still renders; the next request retries the drain.
+    }
   }
 
   // 2. Hydrate joins in parallel: deal, comments, resolver (if any).

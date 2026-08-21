@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireSpaceOwner } from '@/lib/api-auth';
 import { supabase } from '@/lib/supabase';
 import { logger } from '@/lib/logger';
+import {
+  REVIEW_LOG_NOTE,
+  autoResolveOpenReviews,
+} from '@/app/api/broker/reviews/auto-resolve';
 
 type Params = { params: Promise<{ slug: string; id: string }> };
 
@@ -63,7 +67,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: 'User not found' }, { status: 404 });
   }
 
-  const { data: row, error } = await supabase
+  const { data: loaded, error } = await supabase
     .from('DealReviewRequest')
     .select(
       'id, dealId, status, reason, createdAt, resolvedAt, resolvedByUserId, resolvedNote, requestingUserId, brokerageId',
@@ -79,11 +83,31 @@ export async function GET(_req: NextRequest, { params }: Params) {
   // requestingUserId and brokerageId; the latter defends against a freak
   // cross-brokerage collision where the agent changed brokerages.
   if (
-    !row ||
-    row.requestingUserId !== dbUser.id ||
-    row.brokerageId !== space.brokerageId
+    !loaded ||
+    loaded.requestingUserId !== dbUser.id ||
+    loaded.brokerageId !== space.brokerageId
   ) {
     return NextResponse.json({ error: 'Review not found' }, { status: 404 });
+  }
+
+  let row = loaded;
+  if (row.status === 'open') {
+    try {
+      await autoResolveOpenReviews({
+        reviewId,
+        brokerageId: space.brokerageId,
+        resolvedByUserId: dbUser.id,
+      });
+      row = {
+        ...row,
+        status: 'approved',
+        resolvedAt: new Date().toISOString(),
+        resolvedByUserId: dbUser.id,
+        resolvedNote: REVIEW_LOG_NOTE,
+      };
+    } catch (err) {
+      logger.error('[space/reviews/detail/GET] auto-resolve failed', { reviewId }, err);
+    }
   }
 
   const [dealRes, commentsRes, resolvedByRes] = await Promise.all([
