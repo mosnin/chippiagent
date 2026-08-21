@@ -16,6 +16,8 @@ import {
   buildSystemPrompt,
   realtorVerbForToolkit,
   doneVerbForToolkit,
+  inferToolkitFromSlug,
+  sanitizeExecuteProposals,
   type ProposedAction,
   type IntegrationToolSpec,
 } from '@/lib/chippi/post-tour';
@@ -308,6 +310,107 @@ describe('buildSystemPrompt — integration catalog', () => {
   it('tells the model to prefer connected-app tools when intent is to actually send', () => {
     const prompt = buildSystemPrompt([], [GMAIL]);
     expect(prompt).toMatch(/prefer the connected-app tool/);
+  });
+});
+
+describe('inferToolkitFromSlug', () => {
+  it('recovers gmail from GMAIL_SEND_EMAIL when Gmail is connected', () => {
+    expect(inferToolkitFromSlug('GMAIL_SEND_EMAIL', new Set(['gmail']))).toBe('gmail');
+  });
+
+  it('recovers googlecalendar from a multi-token toolkit slug', () => {
+    expect(
+      inferToolkitFromSlug('GOOGLECALENDAR_CREATE_EVENT', new Set(['googlecalendar'])),
+    ).toBe('googlecalendar');
+  });
+
+  it('returns null when that toolkit is not connected', () => {
+    expect(inferToolkitFromSlug('GMAIL_SEND_EMAIL', new Set(['slack']))).toBeNull();
+    expect(inferToolkitFromSlug('GMAIL_SEND_EMAIL', new Set())).toBeNull();
+  });
+});
+
+describe('sanitizeExecuteProposals', () => {
+  const GMAIL = new Set(['gmail']);
+
+  it('keeps native allowlisted tools', () => {
+    const out = sanitizeExecuteProposals(
+      [{ tool: 'draft_sms', args: { personId: 'p1', intent: 'check-in' } }],
+      new Set(),
+    );
+    expect(out).toEqual([
+      { tool: 'draft_sms', args: { personId: 'p1', intent: 'check-in' } },
+    ]);
+  });
+
+  it('fires a connected-app follow-up send from the recorder payload (tool + args only)', () => {
+    // The recorder posts `{ tool, args }` and strips integrationToolkit.
+    // That used to drop GMAIL_SEND_EMAIL — approved follow-up never sent.
+    const out = sanitizeExecuteProposals(
+      [
+        {
+          tool: 'GMAIL_SEND_EMAIL',
+          args: { to: 'sam@chen.com', subject: 'Tour follow-up', body: 'How did it feel?' },
+        },
+      ],
+      GMAIL,
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].tool).toBe('GMAIL_SEND_EMAIL');
+    expect(out[0].integrationToolkit).toBe('gmail');
+    expect(out[0].args.to).toBe('sam@chen.com');
+  });
+
+  it('still accepts an explicit integrationToolkit when the slug matches', () => {
+    const out = sanitizeExecuteProposals(
+      [
+        {
+          tool: 'GMAIL_SEND_EMAIL',
+          args: { to: 'sam@chen.com' },
+          integrationToolkit: 'gmail',
+        },
+      ],
+      GMAIL,
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].integrationToolkit).toBe('gmail');
+  });
+
+  it('drops a connected-app send when that toolkit was revoked', () => {
+    const out = sanitizeExecuteProposals(
+      [{ tool: 'GMAIL_SEND_EMAIL', args: { to: 'sam@chen.com' } }],
+      new Set(),
+    );
+    expect(out).toEqual([]);
+  });
+
+  it('drops a client-supplied toolkit badge that does not match the slug', () => {
+    // A spoofed badge must not let an unknown slug through just because
+    // Gmail is connected.
+    const out = sanitizeExecuteProposals(
+      [
+        {
+          tool: 'EVIL_TOOL',
+          args: { to: 'sam@chen.com' },
+          integrationToolkit: 'gmail',
+        },
+      ],
+      GMAIL,
+    );
+    expect(out).toEqual([]);
+  });
+
+  it('keeps a native action and a slug-only follow-up send side by side', () => {
+    const out = sanitizeExecuteProposals(
+      [
+        { tool: 'log_call', args: { personId: 'p1', summary: 'tour' } },
+        { tool: 'GMAIL_SEND_EMAIL', args: { to: 'sam@chen.com' } },
+        { tool: 'find_property', args: {} },
+      ],
+      GMAIL,
+    );
+    expect(out.map((o) => o.tool)).toEqual(['log_call', 'GMAIL_SEND_EMAIL']);
+    expect(out[1].integrationToolkit).toBe('gmail');
   });
 });
 

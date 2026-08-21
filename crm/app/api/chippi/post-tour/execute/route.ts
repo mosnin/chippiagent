@@ -15,7 +15,7 @@ import { requireAuth } from '@/lib/api-auth';
 import { getSpaceForUser } from '@/lib/space';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { executeTool } from '@/lib/ai-tools/execute';
-import { POST_TOUR_TOOL_ALLOWLIST, doneVerbForToolkit } from '@/lib/chippi/post-tour';
+import { doneVerbForToolkit, sanitizeExecuteProposals } from '@/lib/chippi/post-tour';
 import { activeToolkits } from '@/lib/integrations/connections';
 import { composioConfigured, executeToolForEntity } from '@/lib/integrations/composio';
 import { logger } from '@/lib/logger';
@@ -69,40 +69,16 @@ export async function POST(req: NextRequest) {
   }
 
   // Sanitize the input. Native tools must be on the post-tour allowlist;
-  // integration tools must reference a toolkit the realtor has actually
-  // connected. Anything else is dropped — this route is not a generic
-  // tool runner.
-  const nativeAllow = new Set(POST_TOUR_TOOL_ALLOWLIST as readonly string[]);
+  // connected-app slugs are resolved from the tool name against the
+  // realtor's live toolkits. The recorder sends `{ tool, args }` only —
+  // requiring a client-echoed `integrationToolkit` dropped approved
+  // follow-up sends. A revoke between propose and execute still drops
+  // the slug. This route is not a generic tool runner.
   const connectedToolkits = composioConfigured()
     ? new Set(await activeToolkits({ spaceId: space.id, userId }))
     : new Set<string>();
 
-  const proposals: ProposalIn[] = [];
-  for (const p of body.proposals) {
-    if (!p || typeof p !== 'object') continue;
-    const tool = (p as { tool?: unknown }).tool;
-    const args = (p as { args?: unknown }).args;
-    const integrationToolkit = (p as { integrationToolkit?: unknown }).integrationToolkit;
-    if (typeof tool !== 'string' || !tool) continue;
-    if (args && typeof args !== 'object') continue;
-
-    if (nativeAllow.has(tool)) {
-      proposals.push({ tool, args: (args as Record<string, unknown>) ?? {} });
-    } else if (
-      typeof integrationToolkit === 'string' &&
-      integrationToolkit &&
-      connectedToolkits.has(integrationToolkit)
-    ) {
-      // Integration proposal — accept only if the realtor still has that
-      // toolkit connected at execute time. A revoke between propose and
-      // execute should NOT silently re-fall-back to a native draft.
-      proposals.push({
-        tool,
-        args: (args as Record<string, unknown>) ?? {},
-        integrationToolkit,
-      });
-    }
-  }
+  const proposals: ProposalIn[] = sanitizeExecuteProposals(body.proposals, connectedToolkits);
   if (proposals.length === 0) {
     return NextResponse.json({ error: 'No valid proposals' }, { status: 400 });
   }
