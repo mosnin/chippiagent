@@ -187,7 +187,7 @@ describe('sendEmailTool handler — contactId path', () => {
       {
         contactId: 'c_1',
         toEmail: 'Jane@Example.com',
-        subject: 'Tour Friday',
+        subject: 'Tour confirmed',
         body: 'Looking forward to it.',
       },
       makeCtx(),
