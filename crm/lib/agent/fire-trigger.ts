@@ -7,16 +7,18 @@
  * Clerk auth. The route now does auth + delegates here.
  *
  * Behaviour:
- *   1. For inbound-lead events (`new_lead`, `application_submitted`) with a
- *      contactId, send the first-touch SMS before the queue — the product
- *      cannot wait on Redis or an approval inbox.
- *   1b. For `inbound_message` SMS replies to that first-touch, send the
- *      next booking SMS (confirm their time or offer two windows).
- *   1c. For `tour_completed` with a contactId, send one follow-up SMS in
- *      the assigned realtor's voice. An ask, never a claim.
- *   2. Rate-limit per space-per-minute (capped at RATE_LIMIT).
- *   3. Dedupe within DEDUPE_WINDOW_S using the bucket pattern.
+ *   1. Rate-limit per space-per-minute (capped at RATE_LIMIT). Rate-limit
+ *      only gates the queue — the SMS still goes out.
+ *   2. Dedupe within DEDUPE_WINDOW_S via SET NX EX. The key includes
+ *      tourId / channel / sourceDraftId / a content fingerprint so two
+ *      unique events for the same contact are not collapsed. A duplicate
+ *      claim skips SMS and the queue (one text, one wake).
+ *   3. For inbound-lead events (`new_lead`, `application_submitted`) with a
+ *      contactId, send the first-touch SMS. Same for `inbound_message`
+ *      booking replies and `tour_completed` follow-ups. Redis-down still
+ *      sends — the product cannot wait on the queue or an approval inbox.
  *   4. RPUSH the trigger to `agent:triggers:{spaceId}` (FIFO queue).
+ *      If the push fails, DEL the dedupe claim so a retry is not dropped.
  *   5. If event is in AGENT_IMMEDIATE_EVENTS and MODAL_WEBHOOK_URL is set,
  *      fire the Modal webhook immediately (fire-and-forget).
  *   6. Record the outcome to `agent:trigger:events:{spaceId}` for audit.
@@ -43,6 +45,7 @@ import {
   draftTourFollowUpForContact,
   type TourFollowUpDraftResult,
 } from '@/lib/agent/tour-follow-up';
+import { createHash } from 'node:crypto';
 
 const RATE_LIMIT = 20;
 const RATE_WINDOW_S = 60;
@@ -115,12 +118,36 @@ async function checkRateLimit(kvUrl: string, kvToken: string, spaceId: string): 
   return count <= RATE_LIMIT;
 }
 
-async function isDuplicate(
+function fingerprint(value: string | undefined): string {
+  const trimmed = value?.trim();
+  if (!trimmed) return 'none';
+  return createHash('sha256').update(trimmed).digest('hex').slice(0, 16);
+}
+
+export function makeTriggerDedupeKey(input: FireTriggerInput): string {
+  // space+event+contact+deal is too coarse: two tour_completed rows for
+  // the same contact, or two inbound_message texts, shared one key and
+  // the second unique event was dropped for DEDUPE_WINDOW_S. Content is
+  // hashed so Redis keys never hold the SMS body.
+  return [
+    'agent:trigger-dedupe',
+    input.spaceId,
+    input.event,
+    input.contactId ?? 'none',
+    input.dealId ?? 'none',
+    input.tourId ?? 'none',
+    input.channel ?? 'none',
+    input.sourceDraftId ?? 'none',
+    fingerprint(input.content),
+  ].join(':');
+}
+
+async function claimTrigger(
   kvUrl: string,
   kvToken: string,
   input: FireTriggerInput,
-): Promise<boolean> {
-  const key = `agent:trigger-dedupe:${input.spaceId}:${input.event}:${input.contactId ?? 'none'}:${input.dealId ?? 'none'}`;
+): Promise<{ duplicate: boolean; key: string }> {
+  const key = makeTriggerDedupeKey(input);
   // SET NX EX in one atomic op. The key lives DEDUPE_WINDOW_S from THIS
   // event, so it is a true sliding window. The old floor(now/window) bucket
   // reset at fixed clock boundaries — two identical events that straddled a
@@ -129,10 +156,25 @@ async function isDuplicate(
     `${kvUrl}/set/${encodeURIComponent(key)}/1/EX/${Math.max(1, DEDUPE_WINDOW_S)}/NX`,
     { method: 'POST', headers: { Authorization: `Bearer ${kvToken}` } },
   );
-  if (!res.ok) return false; // fail open — never drop a real trigger
+  if (!res.ok) return { duplicate: false, key }; // fail open — never drop a real trigger
   const { result } = (await res.json()) as { result: string | null };
   // 'OK' → key was absent → first occurrence. null → key existed → duplicate.
-  return result === null;
+  return { duplicate: result === null, key };
+}
+
+async function releaseTriggerClaim(
+  kvUrl: string,
+  kvToken: string,
+  key: string,
+): Promise<void> {
+  try {
+    await fetch(`${kvUrl}/del/${encodeURIComponent(key)}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${kvToken}` },
+    });
+  } catch {
+    // Best-effort. A stuck 120s claim is better than throwing out of fireAgentTrigger.
+  }
 }
 
 async function maybeDraftFirstTouch(input: FireTriggerInput): Promise<FirstTouchDraftResult | undefined> {
@@ -190,26 +232,40 @@ export async function fireAgentTrigger(input: FireTriggerInput): Promise<FireTri
     return { queued: false, reason: 'missing_space_id' };
   }
 
-  // First-touch / reply / tour-follow-up are the product. Send before the
-  // Redis wake so the SMS goes out when the queue is down.
+  const kvUrl = process.env.KV_REST_API_URL;
+  const kvToken = process.env.KV_REST_API_TOKEN;
+
+  let claimKey: string | undefined;
+  let rateLimited = false;
+
+  if (kvUrl && kvToken) {
+    const allowed = await checkRateLimit(kvUrl, kvToken, input.spaceId);
+    if (!allowed) {
+      rateLimited = true;
+    } else {
+      const claim = await claimTrigger(kvUrl, kvToken, input);
+      claimKey = claim.key;
+      if (claim.duplicate) {
+        // Known retry of the same event. Do not send a second SMS and do
+        // not enqueue a second wake.
+        await recordOutcome(kvUrl, kvToken, input, 'deduped');
+        return { queued: true, deduped: true };
+      }
+    }
+  }
+
+  // First-touch / reply / tour-follow-up are the product. Send when this
+  // event is not a known Redis duplicate so the SMS still goes out when
+  // the queue is down or the space is rate-limited.
   const firstTouch = await maybeDraftFirstTouch(input);
   const firstTouchReply = await maybeDraftFirstTouchReply(input);
   const tourFollowUp = await maybeDraftTourFollowUp(input);
 
-  const kvUrl = process.env.KV_REST_API_URL;
-  const kvToken = process.env.KV_REST_API_TOKEN;
   if (!kvUrl || !kvToken) {
     return { queued: false, reason: 'redis_not_configured', firstTouch, firstTouchReply, tourFollowUp };
   }
-
-  const allowed = await checkRateLimit(kvUrl, kvToken, input.spaceId);
-  if (!allowed) {
+  if (rateLimited) {
     return { queued: false, reason: 'rate_limited', firstTouch, firstTouchReply, tourFollowUp };
-  }
-
-  if (await isDuplicate(kvUrl, kvToken, input)) {
-    await recordOutcome(kvUrl, kvToken, input, 'deduped');
-    return { queued: true, deduped: true, firstTouch, firstTouchReply, tourFollowUp };
   }
 
   const trigger = JSON.stringify({
@@ -231,6 +287,12 @@ export async function fireAgentTrigger(input: FireTriggerInput): Promise<FireTri
     body: JSON.stringify([trigger]),
   });
   if (!pushRes.ok) {
+    // SET NX already claimed this unique event. If we keep the key after a
+    // failed RPUSH, retries inside the window are treated as duplicates
+    // and the event is dropped — no queue, no wake.
+    if (claimKey) {
+      await releaseTriggerClaim(kvUrl, kvToken, claimKey);
+    }
     return { queued: false, reason: 'redis_push_failed', firstTouch, firstTouchReply, tourFollowUp };
   }
 
