@@ -25,7 +25,7 @@ describe('tour booking contact + complete invariants', () => {
     expect(PATCH).toMatch(/event:\s*'tour_completed'/);
     expect(PATCH).toMatch(/body\.status === 'completed'/);
     expect(PATCH).toMatch(/tourId:\s*data\.id/);
-    expect(PATCH.indexOf('fireAgentTrigger')).toBeLessThan(PATCH.indexOf('sendTourFollowUp'));
+    expect(PATCH.lastIndexOf('fireAgentTrigger')).toBeLessThan(PATCH.lastIndexOf('sendTourFollowUp'));
     expect(PATCH).not.toMatch(/Chippy/);
   });
 });
