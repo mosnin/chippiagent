@@ -233,7 +233,7 @@ export async function draftTourFollowUpForContact(
   }
 
   const cutoff = new Date(now.getTime() - DEDUPE_WINDOW_HOURS * 60 * 60 * 1000).toISOString();
-  const { data: existingRows } = await supabase
+  const { data: existingRows, error: draftsError } = await supabase
     .from('AgentDraft')
     .select('id,content,status,channel,reasoning,createdAt')
     .eq('spaceId', input.spaceId)
@@ -242,6 +242,10 @@ export async function draftTourFollowUpForContact(
     .gte('createdAt', cutoff)
     .order('createdAt', { ascending: false })
     .limit(20);
+  if (draftsError) {
+    logger.error('[tour-follow-up] draft lookup failed', { spaceId: input.spaceId }, draftsError);
+    throw new Error('Draft lookup failed');
+  }
 
   const drafts = (existingRows ?? []) as DraftRow[];
   const alreadySent = drafts.find(
@@ -327,24 +331,27 @@ export async function draftTourFollowUpForContact(
       updatedAt: row.updatedAt,
     };
     assertSentDraftPersist(update);
-    const { error: updateError } = await supabase
+    const { data: updated, error: updateError } = await supabase
       .from('AgentDraft')
       .update(update)
       .eq('id', emptyStub.id)
-      .eq('spaceId', input.spaceId);
+      .eq('spaceId', input.spaceId)
+      .select('id');
+    if (!updateError && updated && updated.length > 0) {
+      return {
+        action: 'filled',
+        draftId: emptyStub.id,
+        contactId: input.contactId,
+        channel: 'sms',
+        status: 'sent',
+        content,
+        sent: true,
+      };
+    }
     if (updateError) {
       logger.error('[tour-follow-up] failed to record sent SMS', { spaceId: input.spaceId }, updateError);
-      throw new Error('Failed to record tour-follow-up SMS');
     }
-    return {
-      action: 'filled',
-      draftId: emptyStub.id,
-      contactId: input.contactId,
-      channel: 'sms',
-      status: 'sent',
-      content,
-      sent: true,
-    };
+    row.id = crypto.randomUUID();
   }
 
   const { data: inserted, error: insertError } = await supabase

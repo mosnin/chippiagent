@@ -17,8 +17,10 @@ let tables: Record<
   {
     single?: Row | null;
     rows?: Row[];
+    listError?: { message: string } | null;
     insertError?: { message: string } | null;
     updateError?: { message: string } | null;
+    updateZeroRows?: boolean;
   }
 > = {};
 let insertedDraft: Row | null = null;
@@ -53,17 +55,19 @@ vi.mock('@/lib/supabase', () => {
     });
     chain.update = vi.fn((row: Row) => {
       if (table === 'AgentDraft') updatedDraft = row;
-      const result = { data: override.updateError ? null : { id: 'draft_empty' }, error: override.updateError ?? null };
-      return {
-        eq: vi.fn(() => ({
-          eq: vi.fn(async () => result),
-          then: (r: (v: unknown) => unknown, e?: (e: unknown) => unknown) => Promise.resolve(result).then(r, e),
-        })),
-        then: (r: (v: unknown) => unknown, e?: (e: unknown) => unknown) => Promise.resolve(result).then(r, e),
+      const result = {
+        data: override.updateError || override.updateZeroRows ? [] : [{ id: 'draft_empty' }],
+        error: override.updateError ?? null,
       };
+      const terminal: Record<string, unknown> = {};
+      terminal.eq = vi.fn(() => terminal);
+      terminal.select = vi.fn(() => terminal);
+      terminal.then = (r: (v: unknown) => unknown, e?: (e: unknown) => unknown) =>
+        Promise.resolve(result).then(r, e);
+      return terminal;
     });
     chain.then = (r: (v: unknown) => unknown, e?: (e: unknown) => unknown) =>
-      Promise.resolve({ data: rows, error: null }).then(r, e);
+      Promise.resolve({ data: override.listError ? null : rows, error: override.listError ?? null }).then(r, e);
     return chain;
   }
   return { supabase: { from: vi.fn((table: string) => makeChain(table)) } };
@@ -384,6 +388,47 @@ describe('draftFirstTouchForLead', () => {
     expect(sendSMS).toHaveBeenCalled();
     expect(insertedDraft?.status).toBe('sent');
     expect(insertedDraft?.status).not.toBe('pending');
+  });
+
+  it('fails closed when the sent-draft lookup errors — do not send a duplicate', async () => {
+    seedHappyPath();
+    tables.AgentDraft = { rows: [], listError: { message: 'connection timeout' } };
+    await expect(
+      draftFirstTouchForLead({
+        spaceId: 's1',
+        contactId: 'c1',
+        now: new Date('2026-08-21T14:00:00Z'),
+      }),
+    ).rejects.toThrow(/Draft lookup failed/);
+    expect(sendSMS).not.toHaveBeenCalled();
+    expect(insertedDraft).toBeNull();
+  });
+
+  it('inserts a sent receipt when the empty-stub update writes zero rows', async () => {
+    seedHappyPath();
+    tables.AgentDraft = {
+      rows: [
+        {
+          id: 'd_empty',
+          content: '   ',
+          status: 'pending',
+          channel: 'sms',
+          reasoning: 'First-touch SMS for a new inbound lead — two showing windows. Sent.',
+        },
+      ],
+      updateZeroRows: true,
+    };
+    const result = await draftFirstTouchForLead({
+      spaceId: 's1',
+      contactId: 'c1',
+      now: new Date('2026-08-21T14:00:00Z'),
+    });
+    expect(result.sent).toBe(true);
+    expect(result.action).toBe('sent');
+    expect(result.draftId).not.toBe('d_empty');
+    expect(sendSMS).toHaveBeenCalled();
+    expect(insertedDraft?.status).toBe('sent');
+    expect(insertedDraft?.id).not.toBe('d_empty');
   });
 
   it('fills an empty stub after a real send', async () => {
