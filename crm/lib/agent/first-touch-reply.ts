@@ -142,17 +142,17 @@ export function composeFirstTouchReplySms(input: {
     let text: string;
     switch (input.voice.tone) {
       case 'direct':
-        text = `Hi ${lead} — ${who} here. ${picked} is held.`;
+        text = `Hi ${lead} — ${who} here. ${picked} still work for you?`;
         break;
       case 'formal':
-        text = `Hello ${lead}, this is ${who}. I've reserved ${picked}. I look forward to seeing you.`;
+        text = `Hello ${lead}, this is ${who}. Would ${picked} still work for you?`;
         break;
       case 'casual':
-        text = `Hey ${lead}! ${who} here — ${picked} it is. See you there.`;
+        text = `Hey ${lead}! ${who} here — ${picked} still good?`;
         break;
       case 'warm':
       default:
-        text = `Hey ${lead}, this is ${who}. I'll lock ${picked} — see you then.`;
+        text = `Hey ${lead}, this is ${who}. I can do ${picked} — does that still work?`;
         break;
     }
     const content = text.replace(/\s+/g, ' ').trim();
@@ -183,6 +183,14 @@ export function assertValidFirstTouchReplyText(
   if (/\b(sent|delivered|auto-?sent)\b/i.test(content)) {
     throw new Error('first-touch reply draft claims it was sent');
   }
+  if (
+    /\b(booked|live|reserved|locked)\b/i.test(content) ||
+    /\bis held\b/i.test(content) ||
+    /\bi['’]ll lock\b/i.test(content) ||
+    /\bsee you (then|there)\b/i.test(content)
+  ) {
+    throw new Error('first-touch reply draft claims the showing is booked');
+  }
   if (/\bchippy\b/i.test(content)) {
     throw new Error('first-touch reply draft used the wrong brand spelling');
   }
@@ -194,10 +202,10 @@ export function assertValidFirstTouchReplyText(
       throw new Error(`first-touch reply draft missing confirmed window: ${opts.picked}`);
     }
     const confirmMarks: Record<AgentTone, RegExp> = {
-      warm: /i'll lock|see you then/i,
-      direct: /is held/i,
-      formal: /i've reserved|look forward/i,
-      casual: /it is|see you there/i,
+      warm: /does that still work/i,
+      direct: /still work for you/i,
+      formal: /would .+ still work/i,
+      casual: /still good/i,
     };
     if (!confirmMarks[opts.tone].test(content)) {
       throw new Error(`first-touch reply draft is not in the ${opts.tone} voice`);

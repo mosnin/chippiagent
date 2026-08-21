@@ -94,9 +94,10 @@ beforeEach(() => {
 });
 
 describe('first-touch source invariants', () => {
-  it('never imports a sender and never writes status=sent', () => {
+  it('never imports a sender and never writes status=sent|live|booked', () => {
     expect(SOURCE).not.toMatch(/sendSMS|send_sms|\/api\/agent\/send|from '@\/lib\/sms'|from '@\/lib\/delivery'/);
-    expect(SOURCE).not.toMatch(/status:\s*['"]sent['"]/);
+    expect(SOURCE).not.toMatch(/book_tour|from\(['"]Tour['"]\)/);
+    expect(SOURCE).not.toMatch(/status:\s*['"](?:sent|live|booked)['"]/);
     expect(SOURCE).not.toMatch(/Chippy/);
   });
 });
@@ -162,7 +163,7 @@ describe('composeFirstTouchSms', () => {
     expect(text).toContain('1422 Pine');
     expect(text).toMatch(/this is/i);
     expect(text).not.toMatch(/chippy/i);
-    expect(text).not.toMatch(/\bsent\b/i);
+    expect(text).not.toMatch(/\b(sent|booked|live|reserved|locked)\b/i);
   });
 
   it('keeps direct / formal / casual distinct from each other', () => {
@@ -198,6 +199,23 @@ describe('composeFirstTouchSms', () => {
         tone: 'direct',
       }),
     ).toThrow(/sent/);
+  });
+
+  it('rejects a draft that claims the showing is booked or live', () => {
+    expect(() =>
+      assertValidFirstTouchText('Hey Sam, this is Jordan. Tue 11am is booked. Wed 4pm.', {
+        windows: ['Tue 11am', 'Wed 4pm'],
+        agentToken: 'Jordan',
+        tone: 'warm',
+      }),
+    ).toThrow(/booked/);
+    expect(() =>
+      assertValidFirstTouchText('Hey Sam, this is Jordan. Showing is live. Tue 11am or Wed 4pm.', {
+        windows: ['Tue 11am', 'Wed 4pm'],
+        agentToken: 'Jordan',
+        tone: 'warm',
+      }),
+    ).toThrow(/booked/);
   });
 });
 
@@ -251,7 +269,8 @@ describe('draftFirstTouchForLead', () => {
       channel: 'sms',
       status: 'pending',
     });
-    expect(insertedDraft?.status).not.toBe('sent');
+    expect(['sent', 'live', 'booked']).not.toContain(insertedDraft?.status);
+    expect(String(insertedDraft?.content ?? '')).not.toMatch(/\b(sent|live|booked|reserved|locked)\b/i);
     expect(sendSMS).not.toHaveBeenCalled();
   });
 

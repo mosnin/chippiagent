@@ -98,9 +98,10 @@ beforeEach(() => {
 });
 
 describe('first-touch-reply source invariants', () => {
-  it('never imports a sender and never writes status=sent', () => {
+  it('never imports a sender and never writes status=sent|live|booked', () => {
     expect(SOURCE).not.toMatch(/sendSMS|send_sms|\/api\/agent\/send|from '@\/lib\/sms'|from '@\/lib\/delivery'/);
-    expect(SOURCE).not.toMatch(/status:\s*['"]sent['"]/);
+    expect(SOURCE).not.toMatch(/book_tour|from\(['"]Tour['"]\)/);
+    expect(SOURCE).not.toMatch(/status:\s*['"](?:sent|live|booked)['"]/);
     expect(SOURCE).not.toMatch(/Chippy/);
   });
 });
@@ -147,16 +148,40 @@ describe('composeFirstTouchReplySms', () => {
       }),
     ).toThrow(/empty/);
     expect(() =>
-      assertValidFirstTouchReplyText('Hi Sam — auto-sent. Tue 11am is held.', {
+      assertValidFirstTouchReplyText('Hi Sam — auto-sent. Tue 11am still work for you?', {
         windows: ['Tue 11am'],
         agentToken: 'Jordan',
         tone: 'direct',
         picked: 'Tue 11am',
       }),
     ).toThrow(/sent/);
+    expect(() =>
+      assertValidFirstTouchReplyText('Hi Sam — Jordan here. Tue 11am is held.', {
+        windows: ['Tue 11am'],
+        agentToken: 'Jordan',
+        tone: 'direct',
+        picked: 'Tue 11am',
+      }),
+    ).toThrow(/booked/);
+    expect(() =>
+      assertValidFirstTouchReplyText('Hi Sam — Jordan here. Tue 11am is booked.', {
+        windows: ['Tue 11am'],
+        agentToken: 'Jordan',
+        tone: 'direct',
+        picked: 'Tue 11am',
+      }),
+    ).toThrow(/booked/);
+    expect(() =>
+      assertValidFirstTouchReplyText('Hi Sam — Jordan here. Showing is live. Tue 11am.', {
+        windows: ['Tue 11am'],
+        agentToken: 'Jordan',
+        tone: 'direct',
+        picked: 'Tue 11am',
+      }),
+    ).toThrow(/booked/);
   });
 
-  it('confirms a picked window in the assigned agent voice', () => {
+  it('confirms a picked window in the assigned agent voice without claiming it is booked', () => {
     const text = composeFirstTouchReplySms({
       contactFirstName: 'Sam Rivera',
       voice: { tone: 'direct', agentFirstName: 'Jordan Lee' },
@@ -167,9 +192,10 @@ describe('composeFirstTouchReplySms', () => {
     expect(text).toContain('Sam');
     expect(text).toContain('Jordan');
     expect(text).toContain('Tue 11am');
-    expect(text).toMatch(/is held/i);
+    expect(text).toMatch(/still work for you/i);
     expect(text).not.toMatch(/chippy/i);
-    expect(text).not.toMatch(/\bsent\b/i);
+    expect(text).not.toMatch(/\b(sent|booked|live|reserved|locked)\b/i);
+    expect(text).not.toMatch(/is held|i'll lock|see you then|see you there/i);
   });
 
   it('re-offers two concrete windows when they did not pick', () => {
@@ -182,6 +208,7 @@ describe('composeFirstTouchReplySms', () => {
     expect(text).toContain('Wed 4pm');
     expect(text).toContain('Jordan');
     expect(text.trim().length).toBeGreaterThan(0);
+    expect(text).not.toMatch(/\b(sent|booked|live|reserved|locked)\b/i);
   });
 });
 
@@ -263,7 +290,8 @@ describe('draftFirstTouchReplyForLead', () => {
       status: 'pending',
       reasoning: REPLY_REASON,
     });
-    expect(insertedDraft?.status).not.toBe('sent');
+    expect(['sent', 'live', 'booked']).not.toContain(insertedDraft?.status);
+    expect(String(insertedDraft?.content ?? '')).not.toMatch(/\b(sent|live|booked|reserved|locked)\b/i);
     expect(sendSMS).not.toHaveBeenCalled();
   });
 
@@ -299,7 +327,7 @@ describe('draftFirstTouchReplyForLead', () => {
     seedHappyPath([
       {
         id: 'd_reply',
-        content: 'Hi Sam — Jordan here. Tue 11am is held.',
+        content: 'Hi Sam — Jordan here. Tue 11am still work for you?',
         status: 'pending',
         channel: 'sms',
         reasoning: REPLY_REASON,
@@ -354,6 +382,7 @@ describe('draftFirstTouchReplyForLead', () => {
     expect(result.sent).toBe(false);
     expect(updatedDraft?.content).toBe(result.content);
     expect(updatedDraft?.status).toBe('pending');
+    expect(['sent', 'live', 'booked']).not.toContain(updatedDraft?.status);
     expect(sendSMS).not.toHaveBeenCalled();
   });
 

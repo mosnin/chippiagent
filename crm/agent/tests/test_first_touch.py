@@ -24,7 +24,11 @@ SOURCE = Path(__file__).resolve().parents[1] / "first_touch.py"
 def test_source_never_sends():
     text = SOURCE.read_text()
     assert "send_sms" not in text
+    assert "book_tour" not in text
     assert "status\": \"sent\"" not in text
+    assert '"status": "sent"' not in text
+    assert '"status": "live"' not in text
+    assert '"status": "booked"' not in text
     assert "Chippy" not in text
     assert '"status": "pending"' in text
 
@@ -72,6 +76,8 @@ def test_compose_is_in_assigned_agent_voice():
     assert "i can hold" in text.lower()
     assert "chippy" not in text.lower()
     assert "sent" not in text.lower()
+    assert "booked" not in text.lower()
+    assert "live" not in text.lower()
 
 
 def test_empty_or_sent_drafts_fail():
@@ -88,6 +94,20 @@ def test_empty_or_sent_drafts_fail():
             windows=["Tue 11am", "Wed 4pm"],
             agent_token="Jordan",
             tone="direct",
+        )
+    with pytest.raises(ValueError, match="booked"):
+        assert_valid_first_touch_text(
+            "Hey Sam, this is Jordan. Tue 11am is booked. Wed 4pm.",
+            windows=["Tue 11am", "Wed 4pm"],
+            agent_token="Jordan",
+            tone="warm",
+        )
+    with pytest.raises(ValueError, match="booked"):
+        assert_valid_first_touch_text(
+            "Hey Sam, this is Jordan. Showing is live. Tue 11am or Wed 4pm.",
+            windows=["Tue 11am", "Wed 4pm"],
+            agent_token="Jordan",
+            tone="warm",
         )
 
 

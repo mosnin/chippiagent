@@ -264,6 +264,14 @@ export function assertValidFirstTouchText(
   if (/\b(sent|delivered|auto-?sent)\b/i.test(content)) {
     throw new Error('first-touch draft claims it was sent');
   }
+  if (
+    /\b(booked|live|reserved|locked)\b/i.test(content) ||
+    /\bis held\b/i.test(content) ||
+    /\bi['’]ll lock\b/i.test(content) ||
+    /\bsee you (then|there)\b/i.test(content)
+  ) {
+    throw new Error('first-touch draft claims the showing is booked');
+  }
   for (const window of opts.windows) {
     if (!content.includes(window)) {
       throw new Error(`first-touch draft missing showing window: ${window}`);

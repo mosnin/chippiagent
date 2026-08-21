@@ -31,7 +31,7 @@ beforeEach(() => {
     contactId: 'c1',
     channel: 'sms',
     status: 'pending',
-    content: 'Hi Sam — Jordan here. Tue 11am is held.',
+    content: 'Hi Sam — Jordan here. Tue 11am still work for you?',
     windows: ['Tue 11am'],
     picked: 'Tue 11am',
     sent: false,

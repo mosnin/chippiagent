@@ -163,6 +163,21 @@ def assert_valid_first_touch_text(
     lower = content.lower()
     if any(word in lower for word in ("sent", "delivered", "auto-sent", "autosent")):
         raise ValueError("first-touch draft claims it was sent")
+    if any(
+        word in lower
+        for word in (
+            "booked",
+            "live",
+            "reserved",
+            "locked",
+            "is held",
+            "i'll lock",
+            "i’ll lock",
+            "see you then",
+            "see you there",
+        )
+    ):
+        raise ValueError("first-touch draft claims the showing is booked")
     for window in windows:
         if window not in content:
             raise ValueError(f"first-touch draft missing showing window: {window}")

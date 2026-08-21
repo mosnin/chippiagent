@@ -42,10 +42,10 @@ _DAY_ALIASES = {
     "sun": ("sun", "sunday"),
 }
 _CONFIRM_MARKS = {
-    "warm": ("i'll lock", "see you then"),
-    "direct": ("is held",),
-    "formal": ("i've reserved", "look forward"),
-    "casual": ("it is", "see you there"),
+    "warm": ("does that still work",),
+    "direct": ("still work for you",),
+    "formal": ("still work for you",),
+    "casual": ("still good",),
 }
 
 
@@ -125,16 +125,13 @@ def compose_first_touch_reply_sms(
         if not picked_label:
             raise ValueError("first-touch reply draft is empty")
         if tone_key == "direct":
-            text = f"Hi {lead} — {who} here. {picked_label} is held."
+            text = f"Hi {lead} — {who} here. {picked_label} still work for you?"
         elif tone_key == "formal":
-            text = (
-                f"Hello {lead}, this is {who}. I've reserved {picked_label}. "
-                "I look forward to seeing you."
-            )
+            text = f"Hello {lead}, this is {who}. Would {picked_label} still work for you?"
         elif tone_key == "casual":
-            text = f"Hey {lead}! {who} here — {picked_label} it is. See you there."
+            text = f"Hey {lead}! {who} here — {picked_label} still good?"
         else:
-            text = f"Hey {lead}, this is {who}. I'll lock {picked_label} — see you then."
+            text = f"Hey {lead}, this is {who}. I can do {picked_label} — does that still work?"
         content = " ".join(text.split()).strip()
         assert_valid_first_touch_reply_text(
             content, windows=[picked_label], agent_token=who, tone=tone_key, picked=picked_label
@@ -164,6 +161,21 @@ def assert_valid_first_touch_reply_text(
     lower = content.lower()
     if any(word in lower for word in ("sent", "delivered", "auto-sent", "autosent")):
         raise ValueError("first-touch reply draft claims it was sent")
+    if any(
+        word in lower
+        for word in (
+            "booked",
+            "live",
+            "reserved",
+            "locked",
+            "is held",
+            "i'll lock",
+            "i’ll lock",
+            "see you then",
+            "see you there",
+        )
+    ):
+        raise ValueError("first-touch reply draft claims the showing is booked")
     if "chippy" in lower:
         raise ValueError("first-touch reply draft used the wrong brand spelling")
     if agent_token and agent_token not in content:
