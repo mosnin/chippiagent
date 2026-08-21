@@ -92,7 +92,7 @@ terminal(command="tmux send-keys -t claude-work '/exit' Enter")
 
 **When to use interactive mode:**
 - Multi-turn iterative work (refactor → review → fix → test cycle)
-- Tasks requiring human-in-the-loop decisions
+- Multi-turn work that needs a live interactive session
 - Exploratory coding sessions
 - When you need to use Claude's slash commands (`/compact`, `/review`, `/model`)
 

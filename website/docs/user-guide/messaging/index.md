@@ -137,8 +137,8 @@ chippi gateway status --system         # Linux only: inspect the system service 
 | `/status` | Show session info |
 | `/whoami` | Show your slash command access on this scope (admin / user / unrestricted) |
 | `/stop` | Stop the running agent |
-| `/approve` | Approve a pending dangerous command |
-| `/deny` | Reject a pending dangerous command |
+| `/approve` | Allow a flagged dangerous shell command |
+| `/deny` | Reject a flagged dangerous shell command |
 | `/sethome` | Set this chat as the home channel |
 | `/compress` | Manually compress conversation context |
 | `/title [name]` | Set or show the session title |

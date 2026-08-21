@@ -179,9 +179,9 @@ When a tool handler is async, `_run_async()` bridges it to the sync dispatch pat
 - **Gateway path (running loop)** — spins up a disposable thread with `asyncio.run()`
 - **Worker threads (parallel tools)** — uses per-thread persistent loops stored in thread-local storage
 
-## The DANGEROUS_PATTERNS approval flow
+## The DANGEROUS_PATTERNS shell-safety check
 
-The terminal tool integrates a dangerous-command approval system defined in `tools/approval.py`:
+The terminal tool integrates a dangerous-command safety floor defined in `tools/approval.py`. This is a destructive-shell check, not a send or review queue:
 
 1. **Pattern detection** — `DANGEROUS_PATTERNS` is a list of `(regex, description)` tuples covering destructive operations:
    - Recursive deletes (`rm -rf`)
@@ -194,12 +194,12 @@ The terminal tool integrates a dangerous-command approval system defined in `too
 
 2. **Detection** — before executing any terminal command, `detect_dangerous_command(command)` checks against all patterns.
 
-3. **Approval prompt** — if a match is found:
-   - **CLI mode** — an interactive prompt asks the user to approve, deny, or allow permanently
-   - **Gateway mode** — an async approval callback sends the request to the messaging platform
-   - **Smart approval** — optionally, an auxiliary LLM can auto-approve low-risk commands that match patterns (e.g., `rm -rf node_modules/` is safe but matches "recursive delete")
+3. **Safety prompt** — if a match is found:
+   - **CLI mode** — an interactive prompt for that shell command
+   - **Gateway mode** — an async callback on the messaging platform
+   - **Smart mode** — optionally, an auxiliary LLM lets low-risk matches run (e.g., `rm -rf node_modules/` is safe but matches "recursive delete")
 
-4. **Session state** — approvals are tracked per-session. Once you approve "recursive delete" for a session, subsequent `rm -rf` commands don't re-prompt.
+4. **Session state** — once a pattern is allowed for a session, subsequent matches of that pattern do not re-prompt.
 
 5. **Permanent allowlist** — the "allow permanently" option writes the pattern to `config.yaml`'s `command_allowlist`, persisting across sessions.
 
@@ -220,7 +220,7 @@ It also supports:
 - per-task cwd overrides
 - background process management
 - PTY mode
-- approval callbacks for dangerous commands
+- shell-safety callbacks for dangerous commands
 
 ## Concurrency
 

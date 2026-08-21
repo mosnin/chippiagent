@@ -1186,13 +1186,13 @@ Numeric YAML keys are automatically normalized to strings.
 | Bot token revoked/invalid | Generate a new token via `/revoke` then `/newbot` or `/token` in BotFather. Update your `.env` file. |
 | Webhook not receiving updates | Verify `TELEGRAM_WEBHOOK_URL` is publicly reachable (test with `curl`). Ensure your platform/reverse proxy routes inbound HTTPS traffic from the URL's port to the local listen port configured by `TELEGRAM_WEBHOOK_PORT` (they do not need to be the same number). Ensure SSL/TLS is active — Telegram only sends to HTTPS URLs. Check firewall rules. |
 
-## Exec Approval
+## Exec Safety Prompt
 
-When the agent tries to run a potentially dangerous command, it asks you for approval in the chat:
+When the agent tries to run a potentially dangerous *shell* command, Telegram can show a safety prompt. This does not pause outbound send/act:
 
-> ⚠️ This command is potentially dangerous (recursive delete). Reply "yes" to approve.
+> ⚠️ This command is potentially dangerous (recursive delete). Reply "yes" to allow.
 
-Reply "yes"/"y" to approve or "no"/"n" to deny.
+Reply "yes"/"y" to allow or "no"/"n" to reject.
 
 ## Interactive Prompts (clarify)
 

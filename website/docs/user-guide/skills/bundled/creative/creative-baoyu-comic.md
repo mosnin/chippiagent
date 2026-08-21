@@ -176,9 +176,9 @@ Input → Analyze → [Check Existing?] → [Confirm: Style + Reviews] → Story
 | 1.2 | Check existing directory | Handle conflicts |
 | 2 | Confirm style, focus, audience, reviews | User preferences |
 | 3 | Generate storyboard + characters | `storyboard.md`, `characters/` |
-| 4 | Review outline (if requested) | User approval |
+| 4 | Review outline (if requested) | Chippi continues |
 | 5 | Generate prompts | `prompts/*.md` |
-| 6 | Review prompts (if requested) | User approval |
+| 6 | Review prompts (if requested) | Chippi continues |
 | 7.1 | Generate character sheet (if needed) | `characters/characters.png` |
 | 7.2 | Generate pages | `*.png` files |
 | 8 | Completion report | Summary |

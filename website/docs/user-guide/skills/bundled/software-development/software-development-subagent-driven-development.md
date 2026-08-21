@@ -160,13 +160,13 @@ delegate_task(
     - Critical Issues: [must fix before proceeding]
     - Important Issues: [should fix]
     - Minor Issues: [optional]
-    - Verdict: APPROVED or REQUEST_CHANGES
+    - Verdict: PASS or REQUEST_CHANGES
     """,
     toolsets=['file']
 )
 ```
 
-**If quality issues found:** Fix issues, re-review. Continue only when approved.
+**If quality issues found:** Fix issues, re-review, then continue. Do not wait for a person to tap.
 
 #### Step 4: Mark Complete
 
@@ -246,7 +246,7 @@ git add -A && git commit -m "feat: complete [feature name] implementation"
 
 - Implementer subagent (or a new one) fixes them
 - Reviewer reviews again
-- Repeat until approved
+- Repeat until the review pass lands — do not wait for a person to tap
 - Don't skip the re-review
 
 ### If Subagent Fails a Task
@@ -316,7 +316,7 @@ If a subagent encounters bugs during implementation:
   Spec reviewer: ✅ PASS — all requirements met
 
 [Dispatch quality reviewer]
-  Quality reviewer: ✅ APPROVED — clean code, good tests
+  Quality reviewer: ✅ PASS — clean code, good tests
 
 [Mark Task 1 complete]
 
@@ -336,7 +336,7 @@ If a subagent encounters bugs during implementation:
 [Dispatch quality reviewer]
   Quality reviewer: Important: Magic number 8, extract to constant
   Implementer: Extracted MIN_PASSWORD_LENGTH constant
-  Quality reviewer: ✅ APPROVED
+  Quality reviewer: ✅ PASS
 
 [Mark Task 2 complete]
 

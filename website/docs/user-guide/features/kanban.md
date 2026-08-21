@@ -21,7 +21,7 @@ Both surfaces route through the same `kanban_db` layer, so reads see a consisten
 
 This is the shape that covers the workloads `delegate_task` can't:
 
-- **Research triage** — parallel researchers + analyst + writer, human-in-the-loop.
+- **Research triage** — parallel researchers + analyst + writer; workers complete and act.
 - **Scheduled ops** — recurring daily briefs that build a journal over weeks.
 - **Digital twins** — persistent named assistants (`inbox-triage`, `ops-review`) that accumulate memory over time.
 - **Engineering pipelines** — decompose → implement in parallel worktrees → review → iterate → PR.
@@ -39,16 +39,16 @@ They look similar; they are not the same primitive.
 | Parent | Blocks until child returns | Fire-and-forget after `create` |
 | Child identity | Anonymous subagent | Named profile with persistent memory |
 | Resumability | None — failed = failed | Block → unblock → re-run; crash → reclaim |
-| Human in the loop | Not supported | Comment / unblock at any point |
+| Comments while work runs | Not supported | Comment on a live row; workers keep going |
 | Agents per task | One call = one subagent | N agents over task's life (retry, review, follow-up) |
 | Audit trail | Lost on context compression | Durable rows in SQLite forever |
 | Coordination | Hierarchical (caller → callee) | Peer — any profile reads/writes any task |
 
 **One-sentence distinction:** `delegate_task` is a function call; Kanban is a work queue where every handoff is a row any profile (or human) can see and edit.
 
-**Use `delegate_task` when** the parent agent needs a short reasoning answer before continuing, no humans involved, result goes back into the parent's context.
+**Use `delegate_task` when** the parent agent needs a short reasoning answer before continuing, result goes back into the parent's context.
 
-**Use Kanban when** work crosses agent boundaries, needs to survive restarts, might need human input, might be picked up by a different role, or needs to be discoverable after the fact.
+**Use Kanban when** work crosses agent boundaries, needs to survive restarts, might be picked up by a different role, or needs to be discoverable after the fact.
 
 They coexist: a kanban worker may call `delegate_task` internally during its run.
 
@@ -238,7 +238,7 @@ chippi kanban block    t_abc "need input" --ids t_def t_hij
 | `kanban_show` | Read the current task (title, body, prior attempts, parent handoffs, comments, full pre-formatted `worker_context`). Defaults to the env's task id. | — |
 | `kanban_list` | List task summaries with filters for `assignee`, `status`, `tenant`, archived visibility, and limit. Intended for orchestrators discovering board work. | — |
 | `kanban_complete` | Finish with `summary` + `metadata` structured handoff. | at least one of `summary` / `result` |
-| `kanban_block` | Escalate for human input with a `reason`. | `reason` |
+| `kanban_block` | Park a card with a `reason`. Comments are the log; do not block just to wait. | `reason` |
 | `kanban_heartbeat` | Signal liveness during long operations. Pure side-effect. | — |
 | `kanban_comment` | Append a durable note to the task thread. | `task_id`, `body` |
 | `kanban_create` | (Orchestrators) fan out into child tasks with an `assignee`, optional `parents`, `skills`, etc. | `title`, `assignee` |
@@ -310,7 +310,7 @@ For engineering and review tasks, prefer this optional metadata shape:
   "dependencies": ["parent task id or external issue, if any"],
   "blocked_reason": null,
   "retry_notes": "what failed before, if this was a retry",
-  "residual_risk": ["what was not tested or still needs human review"]
+  "residual_risk": ["what was not tested or still open after this run"]
 }
 ```
 
@@ -439,7 +439,7 @@ For best results, pair it with a profile whose toolsets are restricted to board 
 
 ## Dashboard (GUI)
 
-The `/kanban` CLI and slash command are enough to run the board headlessly, but a visual board is often the right interface for humans-in-the-loop: triage, cross-profile supervision, reading comment threads, and dragging cards between columns. Chippi ships this as a **bundled dashboard plugin** at `plugins/kanban/` — not a core feature, not a separate service — following the model laid out in [Extending the Dashboard](./extending-the-dashboard).
+The `/kanban` CLI and slash command are enough to run the board headlessly, but a visual board is often the right interface for watching work: triage, cross-profile supervision, reading comment threads, and dragging cards between columns. Chippi ships this as a **bundled dashboard plugin** at `plugins/kanban/` — not a core feature, not a separate service — following the model laid out in [Extending the Dashboard](./extending-the-dashboard).
 
 Open it with:
 
@@ -670,7 +670,7 @@ The gateway normally queues slash commands and user messages while an agent is s
 This is the whole point of the separation:
 
 - A worker blocks waiting on a peer → you send `/kanban unblock t_abcd` from your phone and the dispatcher picks the peer up on its next tick. The blocked worker isn't interrupted — it just stops being blocked.
-- You spot a card that needs human context → `/kanban comment t_xyz "use the 2026 schema, not 2025"` lands on the task thread and the *next* run of that task will read it in `kanban_show()`.
+- You spot a card that needs more context → `/kanban comment t_xyz "use the 2026 schema, not 2025"` lands on the task thread and the *next* run of that task will read it in `kanban_show()`. The comment does not pause send/act.
 - You want to know what your fleet is doing without stopping the orchestrator → `/kanban list --mine` or `/kanban stats` inspects the board without touching your main conversation.
 
 ### Auto-subscribe on `/kanban create` (gateway only)
@@ -708,7 +708,7 @@ The board supports these eight patterns without any new primitives:
 | **P2 Pipeline** | role chain: scout → editor → writer | daily brief assembly |
 | **P3 Voting / quorum** | N siblings + 1 aggregator | 3 researchers → 1 reviewer picks |
 | **P4 Long-running journal** | same profile + shared dir + cron | Obsidian vault |
-| **P5 Human-in-the-loop** | worker blocks → user comments → unblock | ambiguous decisions |
+| **P5 Comment while it runs** | worker acts → comment lands on the row | notes, not a gate |
 | **P6 `@mention`** | inline routing from prose | `@reviewer look at this` |
 | **P7 Thread-scoped workspace** | `/kanban here` in a thread | per-project gateway threads |
 | **P8 Fleet farming** | one profile, N subjects | 50 social accounts |

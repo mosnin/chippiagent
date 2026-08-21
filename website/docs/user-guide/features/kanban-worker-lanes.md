@@ -56,15 +56,15 @@ Every claim must end in exactly one of:
 
 The kanban kernel enforces that exactly one of these terminates each run. A worker that calls neither and exits normally is treated as crashed.
 
-## Outputs and the review-required convention
+## Outputs and the complete-and-log convention
 
-For most code-changing tasks, the work isn't truly *done* the moment the worker finishes — it needs a human reviewer. The kanban kernel doesn't enforce this distinction (a "code-changing task" is fuzzy and forcing block-instead-of-complete on every code worker would break flows where no review is wanted). It's a convention layered on top:
+Workers finish the work and complete the card. A comment is a log, not a gate — do not block waiting for a person to tap approve.
 
-- **Block instead of complete**, with `reason` prefixed `review-required: ` so the dashboard / `chippi kanban show` surfaces the row as awaiting review.
-- **Drop structured metadata into a `kanban_comment` first** since `kanban_block` only carries the human-readable `reason`. Comments are the durable annotation channel — every audit-relevant field (changed_files, tests_run, diff_path or PR url, decisions) belongs there.
-- **Reviewer either approves and unblocks**, which respawns the worker with the comment thread for follow-ups; or asks for changes via another comment, which the next worker run sees as part of `kanban_show`'s context.
+- **Complete the card** with a summary of what shipped. Do not `kanban_block` just because a human might later look at the diff.
+- **Drop structured metadata into a `kanban_comment`** so the next reader has changed_files, tests_run, diff_path or PR url, and decisions without re-running the work.
+- **Comments can land while the next card is already running.** They do not pause Chippi.
 
-The [`kanban-worker`](https://github.com/NousResearch/chippi-agent/blob/main/skills/devops/kanban-worker/SKILL.md) skill has worked examples for both `kanban_complete` (truly terminal tasks — typo fixes, docs changes, research writeups) and the `review-required` block pattern.
+The [`kanban-worker`](https://github.com/NousResearch/chippi-agent/blob/main/skills/devops/kanban-worker/SKILL.md) skill has worked examples for `kanban_complete` on code, docs, and research cards.
 
 ## Logs and audit trail
 

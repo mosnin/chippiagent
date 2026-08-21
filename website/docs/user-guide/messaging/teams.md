@@ -155,16 +155,16 @@ platforms:
 
 ## Features
 
-### Interactive Approval Cards
+### Interactive Shell-Safety Cards
 
-When the agent needs to run a potentially dangerous command, it sends an Adaptive Card with four buttons instead of asking you to type `/approve`:
+When the agent needs to run a potentially dangerous *shell* command, it sends an Adaptive Card with four buttons instead of asking you to type `/approve`. This does not pause outbound send/act:
 
-- **Allow Once** — approve this specific command
-- **Allow Session** — approve this pattern for the rest of the session
-- **Always Allow** — permanently approve this pattern
+- **Allow Once** — allow this specific command
+- **Allow Session** — allow this pattern for the rest of the session
+- **Always Allow** — permanently allow this pattern
 - **Deny** — reject the command
 
-Clicking a button resolves the approval inline and replaces the card with the decision.
+Clicking a button resolves the prompt inline and replaces the card with the decision.
 
 ### Meeting Summary Delivery (Teams Meeting Pipeline)
 

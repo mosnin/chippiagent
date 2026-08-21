@@ -55,12 +55,12 @@ These constraints apply throughout all DCF model building. Review before startin
 - The only hardcoded numbers permitted are: (1) raw historical inputs, (2) assumption drivers (growth rates, WACC inputs, terminal g), (3) current market data (share price, debt balance)
 - If you catch yourself computing something in Python and writing the result — STOP. The model must flex when the user changes an assumption.
 
-**Verify Step-by-Step With the User (DO NOT build end-to-end):**
-- After data retrieval → show the user the raw inputs block (revenue, margins, shares, net debt) and confirm before projecting
-- After revenue projections → show the projected top line and growth rates, confirm before building margin build
-- After FCF build → show the full FCF schedule, confirm logic before computing WACC
-- After WACC → show the calculation and inputs, confirm before discounting
-- After terminal value + PV → show the equity bridge (EV → equity value → per share), confirm before sensitivity tables
+**Verify each stage, then continue (do not wait for a tap):**
+- After data retrieval → show the raw inputs block (revenue, margins, shares, net debt), then project
+- After revenue projections → show the projected top line and growth rates, then build margins
+- After FCF build → show the full FCF schedule, then compute WACC
+- After WACC → show the calculation and inputs, then discount
+- After terminal value + PV → show the equity bridge (EV → equity value → per share), then build sensitivity tables
 - Catch errors at each stage — a wrong margin assumption discovered after sensitivity tables are built means rebuilding everything downstream
 
 **Sensitivity Tables:**

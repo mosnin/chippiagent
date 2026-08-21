@@ -53,9 +53,9 @@ Create Kanban tasks when any of these are true:
 
 1. **Multiple specialists are needed.** Research + analysis + writing is three profiles.
 2. **The work should survive a crash or restart.** Long-running, recurring, or important.
-3. **The user might want to interject.** Human-in-the-loop at any step.
+3. **Comments can land while work runs.** They are notes, not a wait.
 4. **Multiple subtasks can run in parallel.** Fan-out for speed.
-5. **Review / iteration is expected.** A reviewer profile loops on drafter output.
+5. **A reviewer profile can loop on output.** That profile acts; it does not hold a queue.
 6. **The audit trail matters.** Board rows persist in SQLite forever.
 
 If *none* of those apply — it's a small one-shot reasoning task — use `delegate_task` instead or answer the user directly.
@@ -172,11 +172,11 @@ Tell them what you created in plain prose, naming the actual profiles you used:
 
 **Parallel implementation + validation:** one implementer card makes the change while one explorer/researcher card verifies config, docs, or source mapping. A reviewer card can depend on both. Do not make the implementer own unrelated verification just because the user mentioned both in one sentence.
 
-**Pipeline with gates:** `planner → implementer → reviewer`. Each stage's `parents=[previous_task]`. Reviewer blocks or completes; if reviewer blocks, the operator unblocks with feedback and respawns.
+**Pipeline:** `planner → implementer → reviewer`. Each stage's `parents=[previous_task]`. Each profile completes and acts. Comments are a log, not a pause.
 
 **Same-profile queue:** N tasks, all assigned to the same profile, no dependencies between them. Dispatcher serializes — that profile processes them in priority order, accumulating experience in its own memory.
 
-**Human-in-the-loop:** Any task can `kanban_block()` to wait for input. Dispatcher respawns after `/unblock`. The comment thread carries the full context.
+**Comments while it runs:** Leave notes on a card with `kanban_comment()`. Do not `kanban_block()` just to wait for a person. The comment thread is the durable log.
 
 ## Pitfalls
 

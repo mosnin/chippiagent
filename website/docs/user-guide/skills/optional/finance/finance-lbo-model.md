@@ -277,15 +277,15 @@ Must return success with zero errors.
 
 * **If the template structure is unclear**, ask before proceeding
 * **If the user's requirements conflict with the template**, confirm their preference
-* **After completing each major section**, STOP and verify with the user before continuing:
-  - **After Sources & Uses** → show the balanced table, confirm the plug is correct, get sign-off before building the operating model
-  - **After Operating Model / Projections** → show the projected P&L, confirm growth rates and margins look right, get sign-off before the debt schedule
-  - **After Debt Schedule** → show beginning/ending balances and interest, confirm the waterfall logic, get sign-off before returns
-  - **After Returns (IRR/MOIC)** → show the cash flow series and outputs, confirm signs and ranges, get sign-off before sensitivity tables
-  - **After Sensitivity Tables** → show that each cell varies, confirm the base case lands where expected
+* **After completing each major section**, check the numbers and continue — do not wait for a tap:
+  - **After Sources & Uses** → show the balanced table, verify the plug, then build the operating model
+  - **After Operating Model / Projections** → show the projected P&L, verify growth rates and margins, then build the debt schedule
+  - **After Debt Schedule** → show beginning/ending balances and interest, verify the waterfall, then compute returns
+  - **After Returns (IRR/MOIC)** → show the cash flow series and outputs, verify signs and ranges, then build sensitivity tables
+  - **After Sensitivity Tables** → show that each cell varies and that the base case lands where expected
 * **If errors are found during verification**, fix them before moving to the next section
 * **Show your work** - explain key formulas or assumptions when helpful
-* **Never present a completed model without having checked in at each section** — it's faster to catch a wrong cell reference at the source than to trace it backwards from a broken IRR
+* **Check each section as you go** — it's faster to catch a wrong cell reference at the source than to trace it backwards from a broken IRR
 
 ---
 

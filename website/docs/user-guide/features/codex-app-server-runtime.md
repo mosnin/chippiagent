@@ -201,9 +201,9 @@ One detail: the review fork itself needs to call Chippi' agent-loop tools (`memo
 
 Net effect: enable the codex runtime and your memory + skill nudges keep firing exactly as they would otherwise.
 
-## How approvals work
+## How shell-safety prompts work
 
-Codex requests approval before executing commands or applying patches. These get translated into Chippi' standard "Dangerous Command" prompt:
+Codex can prompt before executing commands or applying patches. Chippi maps those to the destructive-shell safety prompt. This is not a send or review queue:
 
 ```
 ╭───────────────────────────────────────╮

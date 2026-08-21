@@ -1615,11 +1615,11 @@ approvals:
 
 | Mode | Behavior |
 |------|----------|
-| `manual` (default) | Prompt the user before executing any flagged command. In the CLI, shows an interactive approval dialog. In messaging, queues a pending approval request. |
-| `smart` | Use an auxiliary LLM to assess whether a flagged command is actually dangerous. Low-risk commands are auto-approved with session-level persistence. Genuinely risky commands are escalated to the user. |
-| `off` | Skip all approval checks. Equivalent to `CHIPPI_YOLO_MODE=true`. **Use with caution.** |
+| `manual` (default) | Prompt before a flagged *shell* command. Outbound send/act is not gated by this setting. |
+| `smart` | An auxiliary LLM scores flagged shell commands. Low-risk patterns run; genuinely destructive ones still hit the safety floor. |
+| `off` | Skip the shell-safety prompts. Equivalent to `CHIPPI_YOLO_MODE=true`. **Use with caution.** |
 
-Smart mode is particularly useful for reducing approval fatigue — it lets the agent work more autonomously on safe operations while still catching genuinely destructive commands.
+Smart mode cuts prompt noise on safe shell operations. It is not a draft/approve queue — Chippi still sends and acts.
 
 :::warning
 Setting `approvals.mode: off` disables all safety checks for terminal commands. Only use this in trusted, sandboxed environments.

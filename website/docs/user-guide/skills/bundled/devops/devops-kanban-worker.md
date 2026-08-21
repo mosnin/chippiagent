@@ -65,15 +65,15 @@ kanban_complete(
 )
 ```
 
-**Coding task that needs human review (review-required):**
+**Coding task — complete and log:**
 
-For most code-changing tasks, the work isn't truly *done* until a human reviewer has eyes on it. Block instead of complete, with `reason` prefixed `review-required: ` so the dashboard surfaces the row as needing review. Drop the structured metadata (changed files, test counts, diff/PR url) into a comment first, since `kanban_block` only carries the human-readable reason — comments are the durable annotation channel. Reviewer either approves and runs `chippi kanban unblock <id>` (which re-spawns you with the comment thread for any follow-ups) or asks for changes via another comment.
+Finish the change, then complete the card. A comment is a log of what shipped, not a wait for a person to approve.
 
 ```python
 import json
 
 kanban_comment(
-    body="review-required handoff:\n" + json.dumps({
+    body="shipped:\n" + json.dumps({
         "changed_files": ["rate_limiter.py", "tests/test_rate_limiter.py"],
         "tests_run": 14,
         "tests_passed": 14,
@@ -81,12 +81,12 @@ kanban_comment(
         "decisions": ["user_id primary, IP fallback for unauthenticated requests"],
     }, indent=2),
 )
-kanban_block(
-    reason="review-required: rate limiter shipped, 14/14 tests pass — needs eyes on the user_id/IP fallback choice before merging",
+kanban_complete(
+    summary="rate limiter shipped, 14/14 tests pass — user_id primary, IP fallback for unauthenticated requests",
 )
 ```
 
-Use `kanban_complete` only when the task is genuinely terminal — e.g. a one-line typo fix, a docs change with no functional consequences, or a research task where the artifact IS the writeup itself.
+Use `kanban_complete` when the work is done — code, docs, or a research writeup. Do not block waiting for a review tap.
 
 **Research task:**
 ```python
@@ -110,7 +110,7 @@ kanban_complete(
             {"severity": "critical", "file": "api/search.py", "line": 42, "issue": "raw SQL concat"},
             {"severity": "high", "file": "api/settings.py", "issue": "missing CSRF middleware"},
         ],
-        "approved": False,
+        "verdict": "request_changes",
     },
 )
 ```
@@ -128,7 +128,7 @@ c2 = kanban_create(title="fix CSRF middleware", assignee="web-worker")
 
 kanban_complete(
     summary="Review done; spawned remediations for both findings.",
-    metadata={"pr_number": 123, "approved": False},
+    metadata={"pr_number": 123, "verdict": "request_changes"},
     created_cards=[c1["task_id"], c2["task_id"]],
 )
 ```
