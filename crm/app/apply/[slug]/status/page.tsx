@@ -3,6 +3,7 @@ import { supabase } from '@/lib/supabase';
 import { getSpaceFromSlug } from '@/lib/space';
 import { ApplicationStatusClient } from './application-status-client';
 import { PublicPageMinimalShell } from '@/components/public-page-shell';
+import { statusContactColumns, toPublicStatusContact } from './public-status-payload';
 
 // Disable caching so status updates show immediately
 export const dynamic = 'force-dynamic';
@@ -84,12 +85,12 @@ export default async function ApplicationStatusPage({
 
   const businessName = settings?.businessName || space.name;
 
-  // Build query — if token is provided, validate both ref AND token (portal mode)
+  // Token-less confirmation links are still valid for a name+status view.
+  // Do not SELECT application answers unless the portal token is present —
+  // those fields must never enter the RSC payload on a public URL.
   let query = supabase
     .from('Contact')
-    .select(
-      'id, name, email, applicationStatus, applicationStatusNote, applicationData, formConfigSnapshot, applicationRef, statusPortalToken, scoringStatus, createdAt',
-    )
+    .select(statusContactColumns(!!token))
     .eq('applicationRef', ref)
     .eq('spaceId', space.id);
 
@@ -111,8 +112,8 @@ export default async function ApplicationStatusPage({
     );
   }
 
-  // Determine if portal mode is enabled (token matches)
-  const portalMode = !!(token && contact.statusPortalToken === token);
+  // Token was already enforced in the query. A matching row means portal mode.
+  const portalMode = !!token;
 
   // Fetch status history and messages only in portal mode
   let statusHistory: {
@@ -180,15 +181,7 @@ export default async function ApplicationStatusPage({
       businessName={businessName}
     >
       <ApplicationStatusClient
-        contact={{
-          name: contact.name,
-          status: contact.applicationStatus ?? 'received',
-          statusNote: contact.applicationStatusNote,
-          applicationRef: contact.applicationRef ?? ref,
-          applicationData: contact.applicationData,
-          formConfigSnapshot: contact.formConfigSnapshot,
-          createdAt: contact.createdAt,
-        }}
+        contact={toPublicStatusContact(contact, portalMode, ref)}
         businessName={businessName}
         portalMode={portalMode}
         statusHistory={statusHistory}
