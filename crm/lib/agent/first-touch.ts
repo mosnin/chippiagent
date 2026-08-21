@@ -1,18 +1,19 @@
 /**
  * First-touch SMS for a new inbound lead.
  *
- * This is the product slice: a lead comes in, Chippi drafts one short text
- * in the assigned realtor's voice with two concrete showing windows, and
- * parks it in the approval inbox. Nothing is sent from here — there is no
- * send path, no autonomy override, no "just this once."
+ * A lead comes in, Chippi writes one short text in the assigned realtor's
+ * voice with two concrete showing windows, and sends it through the real
+ * Telnyx path. No approval inbox. No pending persist. Missing credentials
+ * fail — they do not fall back to a parked draft.
  *
- * Called from the event-trigger path (`fireAgentTrigger`) so the draft
- * exists in minutes even if Modal is slow, and again from the autonomous
- * run as a backstop when a trigger is drained later.
+ * Called from the event-trigger path (`fireAgentTrigger`) so the SMS goes
+ * out even if Modal is slow, and again from the autonomous run as a
+ * backstop when a trigger is drained later.
  */
 
 import { supabase } from '@/lib/supabase';
 import { logger } from '@/lib/logger';
+import { sendSMS } from '@/lib/sms';
 import { isInboundLeadEvent } from '@/lib/agent/trigger-policy';
 
 export type AgentTone = 'warm' | 'direct' | 'formal' | 'casual';
@@ -35,17 +36,42 @@ export interface ComposeFirstTouchInput {
   property?: string;
 }
 
-export type FirstTouchAction = 'drafted' | 'deduped' | 'filled';
+export type FirstTouchAction = 'sent' | 'deduped' | 'filled';
 
 export interface FirstTouchDraftResult {
   action: FirstTouchAction;
   draftId: string;
   contactId: string;
   channel: 'sms';
-  status: 'pending';
+  status: 'sent';
   content: string;
   windows: string[];
-  sent: false;
+  sent: true;
+}
+
+export const FIRST_TOUCH_REASON_MARK = 'First-touch SMS';
+const FIRST_TOUCH_REASON = 'First-touch SMS for a new inbound lead — two showing windows. Sent.';
+
+export function isFirstTouchDraft(row: { reasoning?: string | null }): boolean {
+  return (row.reasoning ?? '').includes(FIRST_TOUCH_REASON_MARK);
+}
+
+export async function sendAutonomousSms(input: {
+  to: string | null | undefined;
+  body: string;
+  label: string;
+}): Promise<void> {
+  const phone = (input.to ?? '').trim();
+  if (!phone) {
+    throw new Error(`${input.label} SMS send failed: contact has no phone number`);
+  }
+  if (!process.env.TELNYX_API_KEY || !process.env.TELNYX_FROM_NUMBER) {
+    throw new Error(`${input.label} SMS send failed: Telnyx credentials missing`);
+  }
+  const delivered = await sendSMS({ to: phone, body: input.body });
+  if (!delivered) {
+    throw new Error(`${input.label} SMS send failed`);
+  }
 }
 
 export interface DraftFirstTouchInput {
@@ -323,7 +349,7 @@ export async function draftFirstTouchForLead(
   const now = input.now ?? new Date();
   const { data: contact, error: contactError } = await supabase
     .from('Contact')
-    .select('id,name,address,properties,applicationData,spaceId')
+    .select('id,name,phone,address,properties,applicationData,spaceId')
     .eq('id', input.contactId)
     .eq('spaceId', input.spaceId)
     .maybeSingle();
@@ -339,18 +365,25 @@ export async function draftFirstTouchForLead(
   const cutoff = new Date(now.getTime() - DEDUPE_WINDOW_HOURS * 60 * 60 * 1000).toISOString();
   const { data: existingRows } = await supabase
     .from('AgentDraft')
-    .select('id,content,status,channel')
+    .select('id,content,status,channel,reasoning')
     .eq('spaceId', input.spaceId)
     .eq('contactId', input.contactId)
     .eq('channel', 'sms')
-    .eq('status', 'pending')
     .gte('createdAt', cutoff)
     .order('createdAt', { ascending: false })
-    .limit(1);
+    .limit(20);
 
-  const existing = (existingRows ?? [])[0] as
-    | { id: string; content: string | null; status: string; channel: string }
-    | undefined;
+  const drafts = (existingRows ?? []) as Array<{
+    id: string;
+    content: string | null;
+    status: string;
+    channel: string;
+    reasoning?: string | null;
+  }>;
+  const alreadySent = drafts.find(
+    (row) => isFirstTouchDraft(row) && row.status === 'sent' && Boolean(row.content?.trim()),
+  );
+  const emptyStub = drafts.find((row) => isFirstTouchDraft(row) && !row.content?.trim());
 
   const [profileRes, settingRes, spaceRes] = await Promise.all([
     supabase
@@ -404,78 +437,84 @@ export async function draftFirstTouchForLead(
     windows,
     property: propertyFromContact(contact),
   });
+  const windowLabels = windows.map((w) => w.label);
 
-  if (existing?.content?.trim()) {
+  if (alreadySent) {
     return {
       action: 'deduped',
-      draftId: existing.id,
+      draftId: alreadySent.id,
       contactId: input.contactId,
       channel: 'sms',
-      status: 'pending',
-      content: existing.content,
-      windows: windows.map((w) => w.label),
-      sent: false,
+      status: 'sent',
+      content: alreadySent.content!,
+      windows: windowLabels,
+      sent: true,
     };
   }
 
+  await sendAutonomousSms({
+    to: (contact as { phone?: string | null }).phone,
+    body: content,
+    label: 'first-touch',
+  });
+
   const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
   const row = {
-    id: existing?.id ?? crypto.randomUUID(),
+    id: emptyStub?.id ?? crypto.randomUUID(),
     spaceId: input.spaceId,
     contactId: input.contactId,
     channel: 'sms' as const,
     content,
-    reasoning:
-      'First-touch SMS for a new inbound lead — two showing windows, awaiting approval. Never sent.',
+    reasoning: FIRST_TOUCH_REASON,
     priority: 80,
-    status: 'pending' as const,
+    status: 'sent' as const,
     expiresAt,
     updatedAt: now.toISOString(),
   };
 
-  if (existing && !existing.content?.trim()) {
+  if (emptyStub) {
     const { error: updateError } = await supabase
       .from('AgentDraft')
       .update({
         content: row.content,
         reasoning: row.reasoning,
         priority: row.priority,
-        status: 'pending',
+        status: 'sent',
         expiresAt: row.expiresAt,
         updatedAt: row.updatedAt,
       })
-      .eq('id', existing.id)
+      .eq('id', emptyStub.id)
       .eq('spaceId', input.spaceId);
     if (updateError) {
-      logger.error('[first-touch] failed to fill empty draft', { spaceId: input.spaceId }, updateError);
-      throw new Error('Failed to fill first-touch draft');
+      logger.error('[first-touch] failed to record sent SMS', { spaceId: input.spaceId }, updateError);
+      throw new Error('Failed to record first-touch SMS');
     }
     return {
       action: 'filled',
-      draftId: existing.id,
+      draftId: emptyStub.id,
       contactId: input.contactId,
       channel: 'sms',
-      status: 'pending',
+      status: 'sent',
       content,
-      windows: windows.map((w) => w.label),
-      sent: false,
+      windows: windowLabels,
+      sent: true,
     };
   }
 
   const { data: inserted, error: insertError } = await supabase.from('AgentDraft').insert(row).select('id').maybeSingle();
   if (insertError) {
     logger.error('[first-touch] insert failed', { spaceId: input.spaceId }, insertError);
-    throw new Error('Failed to create first-touch draft');
+    throw new Error('Failed to record first-touch SMS');
   }
 
   return {
-    action: 'drafted',
+    action: 'sent',
     draftId: (inserted as { id?: string } | null)?.id ?? row.id,
     contactId: input.contactId,
     channel: 'sms',
-    status: 'pending',
+    status: 'sent',
     content,
-    windows: windows.map((w) => w.label),
-    sent: false,
+    windows: windowLabels,
+    sent: true,
   };
 }

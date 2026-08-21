@@ -1,11 +1,12 @@
 """Booking SMS after a lead replies to first-touch — autonomous-run backstop.
 
-The TypeScript event trigger (`lib/agent/first-touch-reply.ts`) drafts as
+The TypeScript event trigger (`lib/agent/first-touch-reply.ts`) sends as
 soon as the inbound SMS lands. This module does the same job when the
 autonomous run drains the trigger queue.
 
-Never sends. Status is always pending. Confirm the time they picked, or
+Sends through Telnyx. Status is sent. Confirm the time they picked, or
 offer two concrete showing windows. Voice comes from AIUserProfile.
+Missing credentials fail — they do not fall back to a pending draft.
 """
 
 from __future__ import annotations
@@ -20,13 +21,14 @@ from first_touch import (
     first_name_of,
     normalize_tone,
     propose_two_showing_windows,
+    send_sms,
 )
 
 INBOUND_MESSAGE_EVENT = "inbound_message"
 _DEDUPE_WINDOW_HOURS = 48
 _FIRST_TOUCH_LOOKBACK_DAYS = 14
 _FIRST_TOUCH_REASON_MARK = "First-touch SMS"
-_REPLY_REASON = "Reply to first-touch — book a showing, awaiting approval. Never sent."
+_REPLY_REASON = "Reply to first-touch — book a showing. Sent."
 
 _WINDOW_LABEL_RE = re.compile(
     r"\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+\d{1,2}(?::\d{2})?(?:am|pm)\b",
@@ -206,10 +208,10 @@ def first_touch_reply_instruction(triggers: list[dict]) -> str | None:
     for t in inbound:
         lines.append(f"- inbound_message contactId: {t['contactId']}")
     return (
-        "FIRST-TOUCH REPLY — the lead answered the first-touch SMS. Draft one "
+        "FIRST-TOUCH REPLY — the lead answered the first-touch SMS. Send one "
         "short SMS in the assigned realtor's voice that books the showing: "
-        "confirm the time they picked, or offer two concrete windows. Park it "
-        "as a pending AgentDraft. Never send.\n" + "\n".join(lines)
+        "confirm the time they picked, or offer two concrete windows. Do not "
+        "park a draft. Do not wait for approval.\n" + "\n".join(lines)
     )
 
 
@@ -257,7 +259,7 @@ async def ensure_first_touch_reply_draft(
     channel: str | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Create or fill a pending first-touch-reply SMS. Never sends."""
+    """Send a first-touch-reply SMS. Persists sent. Never parks pending."""
     from db import supabase
     from tools.base import with_retry
 
@@ -269,7 +271,7 @@ async def ensure_first_touch_reply_draft(
 
     check = await (
         db.table("Contact")
-        .select("id,name,address,properties,applicationData")
+        .select("id,name,phone,address,properties,applicationData")
         .eq("id", contact_id)
         .eq("spaceId", space_id)
         .maybe_single()
@@ -309,29 +311,47 @@ async def ensure_first_touch_reply_draft(
         return _skipped(contact_id, "no_first_touch")
 
     reply_cutoff = when - timedelta(hours=_DEDUPE_WINDOW_HOURS)
-    pending_reply = None
-    for row in drafts:
-        if not is_first_touch_reply_draft(row) or row.get("status") != "pending":
-            continue
-        created = row.get("createdAt")
-        if created:
-            try:
-                created_at = datetime.fromisoformat(created.replace("Z", "+00:00"))
-                if created_at < reply_cutoff:
-                    continue
-            except ValueError:
-                pass
-        pending_reply = row
-        break
 
-    if pending_reply and (pending_reply.get("content") or "").strip():
+    def _in_window(row: dict[str, Any]) -> bool:
+        created = row.get("createdAt")
+        if not created:
+            return True
+        try:
+            created_at = datetime.fromisoformat(created.replace("Z", "+00:00"))
+            return created_at >= reply_cutoff
+        except ValueError:
+            return True
+
+    already_sent = next(
+        (
+            row
+            for row in drafts
+            if is_first_touch_reply_draft(row)
+            and row.get("status") == "sent"
+            and (row.get("content") or "").strip()
+            and _in_window(row)
+        ),
+        None,
+    )
+    empty_stub = next(
+        (
+            row
+            for row in drafts
+            if is_first_touch_reply_draft(row)
+            and not (row.get("content") or "").strip()
+            and _in_window(row)
+        ),
+        None,
+    )
+
+    if already_sent:
         return {
             "action": "deduped",
-            "draftId": pending_reply["id"],
-            "status": "pending",
+            "draftId": already_sent["id"],
+            "status": "sent",
             "channel": "sms",
-            "content": pending_reply["content"],
-            "sent": False,
+            "content": already_sent["content"],
+            "sent": True,
         }
 
     profile_res = await (
@@ -386,8 +406,10 @@ async def ensure_first_touch_reply_draft(
     if not content.strip():
         raise ValueError("first-touch reply draft is empty")
 
+    await send_sms(to=contact.get("phone"), body=content, label="first-touch-reply")
+
     expires_at = (when + timedelta(days=7)).isoformat()
-    if pending_reply and not (pending_reply.get("content") or "").strip():
+    if empty_stub:
         await with_retry(
             lambda: db.table("AgentDraft")
             .update(
@@ -395,24 +417,24 @@ async def ensure_first_touch_reply_draft(
                     "content": content,
                     "reasoning": _REPLY_REASON,
                     "priority": 85,
-                    "status": "pending",
+                    "status": "sent",
                     "expiresAt": expires_at,
                     "updatedAt": when.isoformat(),
                 }
             )
-            .eq("id", pending_reply["id"])
+            .eq("id", empty_stub["id"])
             .eq("spaceId", space_id)
             .execute()
         )
         return {
             "action": "filled",
-            "draftId": pending_reply["id"],
-            "status": "pending",
+            "draftId": empty_stub["id"],
+            "status": "sent",
             "channel": "sms",
             "content": content,
             "windows": [w["label"] for w in windows],
             "picked": picked,
-            "sent": False,
+            "sent": True,
         }
 
     draft = {
@@ -423,18 +445,18 @@ async def ensure_first_touch_reply_draft(
         "content": content,
         "reasoning": _REPLY_REASON,
         "priority": 85,
-        "status": "pending",
+        "status": "sent",
         "expiresAt": expires_at,
     }
     result = await with_retry(lambda: db.table("AgentDraft").insert(draft).execute())
     created = result.data[0] if result.data else draft
     return {
-        "action": "drafted",
+        "action": "sent",
         "draftId": created.get("id", draft["id"]),
-        "status": "pending",
+        "status": "sent",
         "channel": "sms",
         "content": content,
         "windows": [w["label"] for w in windows],
         "picked": picked,
-        "sent": False,
+        "sent": True,
     }

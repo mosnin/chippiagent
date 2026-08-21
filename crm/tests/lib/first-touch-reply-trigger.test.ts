@@ -29,15 +29,15 @@ beforeEach(() => {
   draftFirstTouchForLead.mockReset();
   draftFirstTouchReplyForLead.mockReset();
   draftFirstTouchReplyForLead.mockResolvedValue({
-    action: 'drafted',
+    action: 'sent',
     draftId: 'd_reply',
     contactId: 'c1',
     channel: 'sms',
-    status: 'pending',
+    status: 'sent',
     content: 'Hi Sam — Jordan here. Tue 11am still work for you?',
     windows: ['Tue 11am'],
     picked: 'Tue 11am',
-    sent: false,
+    sent: true,
   });
 });
 
@@ -60,7 +60,7 @@ function kvFetch() {
 }
 
 describe('fireAgentTrigger first-touch reply', () => {
-  it('drafts a pending booking SMS on inbound_message and never sends', async () => {
+  it('sends a booking SMS on inbound_message', async () => {
     vi.stubGlobal('fetch', kvFetch());
     const result = await fireAgentTrigger({
       spaceId: 's1',
@@ -78,8 +78,8 @@ describe('fireAgentTrigger first-touch reply', () => {
       sourceDraftId: 'd_first',
       channel: 'sms',
     });
-    expect(result.firstTouchReply?.sent).toBe(false);
-    expect(result.firstTouchReply?.status).toBe('pending');
+    expect(result.firstTouchReply?.sent).toBe(true);
+    expect(result.firstTouchReply?.status).toBe('sent');
     expect(result.firstTouchReply?.content?.trim().length).toBeGreaterThan(0);
     expect(result.queued).toBe(true);
   });
@@ -95,9 +95,9 @@ describe('fireAgentTrigger first-touch reply', () => {
     });
     expect(draftFirstTouchReplyForLead).toHaveBeenCalledTimes(1);
     expect(result.firstTouchReply).toBeTruthy();
-    expect(result.firstTouchReply?.action).toBe('drafted');
+    expect(result.firstTouchReply?.action).toBe('sent');
     expect(result.firstTouchReply?.content?.trim().length).toBeGreaterThan(0);
-    expect(result.firstTouchReply?.sent).toBe(false);
+    expect(result.firstTouchReply?.sent).toBe(true);
   });
 
   it('does not draft a first-touch reply on new_lead', async () => {
@@ -119,8 +119,8 @@ describe('fireAgentTrigger first-touch reply', () => {
     expect(draftFirstTouchReplyForLead).toHaveBeenCalled();
     expect(result.queued).toBe(false);
     expect(result.reason).toBe('redis_not_configured');
-    expect(result.firstTouchReply?.status).toBe('pending');
-    expect(result.firstTouchReply?.sent).toBe(false);
+    expect(result.firstTouchReply?.status).toBe('sent');
+    expect(result.firstTouchReply?.sent).toBe(true);
     expect(result.firstTouchReply?.content?.trim().length).toBeGreaterThan(0);
   });
 });

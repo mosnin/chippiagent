@@ -31,13 +31,13 @@ beforeEach(() => {
   draftFirstTouchReplyForLead.mockReset();
   draftTourFollowUpForContact.mockReset();
   draftTourFollowUpForContact.mockResolvedValue({
-    action: 'drafted',
+    action: 'sent',
     draftId: 'd_tour',
     contactId: 'c1',
     channel: 'sms',
-    status: 'pending',
+    status: 'sent',
     content: 'Hi Sam — Jordan here. Thoughts on 1422 Pine? Ready to talk next?',
-    sent: false,
+    sent: true,
   });
 });
 
@@ -60,7 +60,7 @@ function kvFetch() {
 }
 
 describe('fireAgentTrigger tour-follow-up', () => {
-  it('drafts a pending follow-up SMS on tour_completed and never sends', async () => {
+  it('sends a follow-up SMS on tour_completed', async () => {
     vi.stubGlobal('fetch', kvFetch());
     const result = await fireAgentTrigger({
       spaceId: 's1',
@@ -75,8 +75,8 @@ describe('fireAgentTrigger tour-follow-up', () => {
       contactId: 'c1',
       tourId: 't1',
     });
-    expect(result.tourFollowUp?.sent).toBe(false);
-    expect(result.tourFollowUp?.status).toBe('pending');
+    expect(result.tourFollowUp?.sent).toBe(true);
+    expect(result.tourFollowUp?.status).toBe('sent');
     expect(result.tourFollowUp?.content?.trim().length).toBeGreaterThan(0);
     expect(result.tourFollowUp?.content).not.toMatch(/\b(sent|live|booked|reserved|locked|held)\b/i);
     expect(result.queued).toBe(true);
@@ -113,8 +113,8 @@ describe('fireAgentTrigger tour-follow-up', () => {
     expect(draftTourFollowUpForContact).toHaveBeenCalled();
     expect(result.queued).toBe(false);
     expect(result.reason).toBe('redis_not_configured');
-    expect(result.tourFollowUp?.status).toBe('pending');
-    expect(result.tourFollowUp?.sent).toBe(false);
+    expect(result.tourFollowUp?.status).toBe('sent');
+    expect(result.tourFollowUp?.sent).toBe(true);
     expect(result.tourFollowUp?.content?.trim().length).toBeGreaterThan(0);
   });
 });

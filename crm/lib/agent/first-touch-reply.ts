@@ -1,12 +1,13 @@
 /**
  * Booking SMS after a lead replies to first-touch.
  *
- * First-touch offered two windows and sat pending. When the lead texts
- * back, Chippi drafts the next message that actually books the showing:
- * confirm the time they picked, or put two concrete windows in front of
- * them again. Always pending. Nothing is sent from here.
+ * First-touch offered two windows. When the lead texts back, Chippi
+ * writes the next message that books the showing — confirm the time they
+ * picked, or put two concrete windows in front of them again — and sends
+ * it through Telnyx. No approval inbox. No pending persist. Missing
+ * credentials fail.
  *
- * Called from the inbound_message trigger so the draft exists even if
+ * Called from the inbound_message trigger so the SMS goes out even if
  * Modal is slow, and again from the autonomous run as a backstop.
  */
 
@@ -17,24 +18,25 @@ import {
   firstNameOf,
   normalizeTone,
   proposeTwoShowingWindows,
+  sendAutonomousSms,
   type AgentTone,
   type FirstTouchVoice,
   type ShowingWindow,
 } from '@/lib/agent/first-touch';
 import { isInboundMessageEvent } from '@/lib/agent/trigger-policy';
 
-export type FirstTouchReplyAction = 'drafted' | 'deduped' | 'filled' | 'skipped';
+export type FirstTouchReplyAction = 'sent' | 'deduped' | 'filled' | 'skipped';
 
 export interface FirstTouchReplyDraftResult {
   action: FirstTouchReplyAction;
   draftId?: string;
   contactId: string;
   channel: 'sms';
-  status: 'pending' | 'skipped';
+  status: 'sent' | 'skipped';
   content: string;
   windows: string[];
   picked?: string;
-  sent: false;
+  sent: boolean;
   reason?: string;
 }
 
@@ -55,8 +57,7 @@ const DEFAULT_END_HOUR = 17;
 const DEFAULT_DAYS = [1, 2, 3, 4, 5];
 
 const FIRST_TOUCH_REASON_MARK = 'First-touch SMS';
-const REPLY_REASON =
-  'Reply to first-touch — book a showing, awaiting approval. Never sent.';
+const REPLY_REASON = 'Reply to first-touch — book a showing. Sent.';
 
 const WINDOW_LABEL_RE =
   /\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+\d{1,2}(?::\d{2})?(?:am|pm)\b/gi;
@@ -279,7 +280,7 @@ export async function draftFirstTouchReplyForLead(
   const now = input.now ?? new Date();
   const { data: contact, error: contactError } = await supabase
     .from('Contact')
-    .select('id,name,address,properties,applicationData,spaceId')
+    .select('id,name,phone,address,properties,applicationData,spaceId')
     .eq('id', input.contactId)
     .eq('spaceId', input.spaceId)
     .maybeSingle();
@@ -316,8 +317,13 @@ export async function draftFirstTouchReplyForLead(
   }
 
   const replyCutoffMs = now.getTime() - DEDUPE_WINDOW_HOURS * 60 * 60 * 1000;
-  const pendingReply = drafts.find((row) => {
-    if (!isFirstTouchReplyDraft(row) || row.status !== 'pending') return false;
+  const alreadySent = drafts.find((row) => {
+    if (!isFirstTouchReplyDraft(row) || row.status !== 'sent' || !row.content?.trim()) return false;
+    if (!row.createdAt) return true;
+    return new Date(row.createdAt).getTime() >= replyCutoffMs;
+  });
+  const emptyStub = drafts.find((row) => {
+    if (!isFirstTouchReplyDraft(row) || Boolean(row.content?.trim())) return false;
     if (!row.createdAt) return true;
     return new Date(row.createdAt).getTime() >= replyCutoffMs;
   });
@@ -385,61 +391,67 @@ export async function draftFirstTouchReplyForLead(
 
   const windowLabels = picked ? [picked] : windows.map((w) => w.label);
 
-  if (pendingReply?.content?.trim()) {
+  if (alreadySent) {
     return {
       action: 'deduped',
-      draftId: pendingReply.id,
+      draftId: alreadySent.id,
       contactId: input.contactId,
       channel: 'sms',
-      status: 'pending',
-      content: pendingReply.content,
+      status: 'sent',
+      content: alreadySent.content!,
       windows: windowLabels,
       picked,
-      sent: false,
+      sent: true,
     };
   }
 
+  await sendAutonomousSms({
+    to: (contact as { phone?: string | null }).phone,
+    body: content,
+    label: 'first-touch-reply',
+  });
+
   const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
   const row = {
-    id: pendingReply?.id ?? crypto.randomUUID(),
+    id: emptyStub?.id ?? crypto.randomUUID(),
     spaceId: input.spaceId,
     contactId: input.contactId,
     channel: 'sms' as const,
     content,
     reasoning: REPLY_REASON,
     priority: 85,
-    status: 'pending' as const,
+    status: 'sent' as const,
     expiresAt,
     updatedAt: now.toISOString(),
   };
 
-  if (pendingReply && !pendingReply.content?.trim()) {
+  if (emptyStub) {
     const { error: updateError } = await supabase
       .from('AgentDraft')
       .update({
         content: row.content,
         reasoning: row.reasoning,
         priority: row.priority,
-        status: 'pending',
+        status: 'sent',
         expiresAt: row.expiresAt,
         updatedAt: row.updatedAt,
       })
-      .eq('id', pendingReply.id)
+      .eq('id', emptyStub.id)
       .eq('spaceId', input.spaceId);
     if (updateError) {
-      logger.error('[first-touch-reply] failed to fill empty draft', { spaceId: input.spaceId }, updateError);
-      throw new Error('Failed to fill first-touch reply draft');
+      logger.error('[first-touch-reply] failed to record sent SMS', { spaceId: input.spaceId }, updateError);
+      throw new Error('Failed to record first-touch reply SMS');
     }
     return {
       action: 'filled',
-      draftId: pendingReply.id,
+      draftId: emptyStub.id,
       contactId: input.contactId,
       channel: 'sms',
-      status: 'pending',
+      status: 'sent',
       content,
       windows: windowLabels,
       picked,
-      sent: false,
+      sent: true,
     };
   }
 
@@ -450,18 +462,18 @@ export async function draftFirstTouchReplyForLead(
     .maybeSingle();
   if (insertError) {
     logger.error('[first-touch-reply] insert failed', { spaceId: input.spaceId }, insertError);
-    throw new Error('Failed to create first-touch reply draft');
+    throw new Error('Failed to record first-touch reply SMS');
   }
 
   return {
-    action: 'drafted',
+    action: 'sent',
     draftId: (inserted as { id?: string } | null)?.id ?? row.id,
     contactId: input.contactId,
     channel: 'sms',
-    status: 'pending',
+    status: 'sent',
     content,
     windows: windowLabels,
     picked,
-    sent: false,
+    sent: true,
   };
 }

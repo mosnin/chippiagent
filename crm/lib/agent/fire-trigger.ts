@@ -8,13 +8,12 @@
  *
  * Behaviour:
  *   1. For inbound-lead events (`new_lead`, `application_submitted`) with a
- *      contactId, draft a pending first-touch SMS (never sent) before the
- *      queue — the product cannot wait on Redis.
- *   1b. For `inbound_message` SMS replies to that first-touch, draft the
- *      next pending booking SMS (confirm their time or offer two windows).
- *      Never sent.
- *   1c. For `tour_completed` with a contactId, draft one pending follow-up
- *      SMS in the assigned realtor's voice. An ask, never a claim. Never sent.
+ *      contactId, send the first-touch SMS before the queue — the product
+ *      cannot wait on Redis or an approval inbox.
+ *   1b. For `inbound_message` SMS replies to that first-touch, send the
+ *      next booking SMS (confirm their time or offer two windows).
+ *   1c. For `tour_completed` with a contactId, send one follow-up SMS in
+ *      the assigned realtor's voice. An ask, never a claim.
  *   2. Rate-limit per space-per-minute (capped at RATE_LIMIT).
  *   3. Dedupe within DEDUPE_WINDOW_S using the bucket pattern.
  *   4. RPUSH the trigger to `agent:triggers:{spaceId}` (FIFO queue).
@@ -191,8 +190,8 @@ export async function fireAgentTrigger(input: FireTriggerInput): Promise<FireTri
     return { queued: false, reason: 'missing_space_id' };
   }
 
-  // First-touch / reply / tour-follow-up are the product. Draft before the
-  // Redis wake so the approval-gated SMS exists when the queue is down.
+  // First-touch / reply / tour-follow-up are the product. Send before the
+  // Redis wake so the SMS goes out when the queue is down.
   const firstTouch = await maybeDraftFirstTouch(input);
   const firstTouchReply = await maybeDraftFirstTouchReply(input);
   const tourFollowUp = await maybeDraftTourFollowUp(input);

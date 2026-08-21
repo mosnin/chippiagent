@@ -9,14 +9,14 @@ const VALID_EVENTS = [
 
 export type TriggerEvent = typeof VALID_EVENTS[number];
 
-/** Inbound lead / new-contact events that owe a first-touch SMS draft. */
+/** Inbound lead / new-contact events that owe a first-touch SMS send. */
 export const INBOUND_LEAD_EVENTS = ['new_lead', 'application_submitted'] as const;
 export type InboundLeadEvent = (typeof INBOUND_LEAD_EVENTS)[number];
 
-/** A lead replied — if that reply is to first-touch, we owe a booking draft. */
+/** A lead replied — if that reply is to first-touch, we owe a booking SMS. */
 export const INBOUND_MESSAGE_EVENT = 'inbound_message' as const;
 
-/** A showing actually finished — we owe one pending follow-up SMS. */
+/** A showing actually finished — we owe one follow-up SMS. */
 export const TOUR_COMPLETED_EVENT = 'tour_completed' as const;
 
 export function isInboundLeadEvent(value: string): value is InboundLeadEvent {

@@ -1,9 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const sendSMS = vi.fn();
+const { sendSMS } = vi.hoisted(() => ({ sendSMS: vi.fn() }));
 
 vi.mock('@/lib/sms', () => ({ sendSMS }));
 vi.mock('@/lib/logger', () => ({
@@ -70,7 +70,7 @@ vi.mock('@/lib/supabase', () => {
 });
 
 import {
-  assertPendingDraftPersist,
+  assertSentDraftPersist,
   assertValidTourFollowUpText,
   composeTourFollowUpSms,
   draftTourFollowUpForContact,
@@ -88,22 +88,32 @@ const TOUR_ROUTE = readFileSync(
   'utf8',
 );
 
-const TOUR_REASON = 'Tour-completed follow-up SMS — ask how the showing felt, awaiting approval. Never sent.';
-const FIRST_TOUCH_REASON = 'First-touch SMS for a new inbound lead — two showing windows, awaiting approval. Never sent.';
+const TOUR_REASON = 'Tour-completed follow-up SMS — ask how the showing felt. Sent.';
+const FIRST_TOUCH_REASON = 'First-touch SMS for a new inbound lead — two showing windows. Sent.';
+
+const OLD_ENV = { ...process.env };
 
 beforeEach(() => {
   tables = {};
   insertedDraft = null;
   updatedDraft = null;
+  process.env.TELNYX_API_KEY = 'test-key';
+  process.env.TELNYX_FROM_NUMBER = '+15555550100';
   sendSMS.mockReset();
+  sendSMS.mockResolvedValue(true);
+});
+
+afterEach(() => {
+  process.env = { ...OLD_ENV };
 });
 
 describe('tour-follow-up source invariants', () => {
-  it('never imports a sender and never writes status=sent|live|booked', () => {
-    expect(SOURCE).not.toMatch(/sendSMS|send_sms|\/api\/agent\/send|from '@\/lib\/sms'|from '@\/lib\/delivery'/);
-    expect(SOURCE).not.toMatch(/status:\s*['"](?:sent|live|booked)['"]/);
+  it('sends through Telnyx and never persists pending', () => {
+    expect(SOURCE).toMatch(/sendAutonomousSms/);
+    expect(SOURCE).toMatch(/status:\s*['"]sent['"]/);
+    expect(SOURCE).not.toMatch(/status:\s*['"]pending['"]/);
+    expect(SOURCE).not.toMatch(/awaiting approval|Never sent|draft parked/i);
     expect(SOURCE).not.toMatch(/Chippy/);
-    expect(SOURCE).toMatch(/status:\s*'pending'/);
   });
 
   it('fires tour_completed from the real tour PATCH completion path', () => {
@@ -222,13 +232,13 @@ describe('composeTourFollowUpSms', () => {
   });
 });
 
-describe('assertPendingDraftPersist', () => {
-  it('rejects any persist that is not pending', () => {
-    expect(() => assertPendingDraftPersist({ status: 'sent' })).toThrow(/pending/);
-    expect(() => assertPendingDraftPersist({ status: 'live' })).toThrow(/pending/);
-    expect(() => assertPendingDraftPersist({ status: 'booked' })).toThrow(/pending/);
-    expect(() => assertPendingDraftPersist({ status: 'approved' })).toThrow(/pending/);
-    expect(() => assertPendingDraftPersist({ status: 'pending' })).not.toThrow();
+describe('assertSentDraftPersist', () => {
+  it('rejects any persist that is pending or not sent', () => {
+    expect(() => assertSentDraftPersist({ status: 'pending' })).toThrow(/pending/);
+    expect(() => assertSentDraftPersist({ status: 'live' })).toThrow(/must be sent/);
+    expect(() => assertSentDraftPersist({ status: 'booked' })).toThrow(/must be sent/);
+    expect(() => assertSentDraftPersist({ status: 'approved' })).toThrow(/must be sent/);
+    expect(() => assertSentDraftPersist({ status: 'sent' })).not.toThrow();
   });
 });
 
@@ -239,6 +249,7 @@ describe('draftTourFollowUpForContact', () => {
         single: {
           id: 'c1',
           name: 'Sam Rivera',
+          phone: '+15555550123',
           address: '1422 Pine',
           properties: [],
           applicationData: null,
@@ -264,7 +275,7 @@ describe('draftTourFollowUpForContact', () => {
     };
   }
 
-  it('inserts a pending SMS and never sends', async () => {
+  it('sends the follow-up SMS through Telnyx and records it as sent', async () => {
     seedHappyPath();
     const result = await draftTourFollowUpForContact({
       spaceId: 's1',
@@ -272,22 +283,42 @@ describe('draftTourFollowUpForContact', () => {
       tourId: 't1',
       now: new Date('2026-08-21T18:05:00Z'),
     });
-    expect(result.sent).toBe(false);
-    expect(result.status).toBe('pending');
+    expect(result.sent).toBe(true);
+    expect(result.status).toBe('sent');
     expect(result.channel).toBe('sms');
-    expect(result.action).toBe('drafted');
+    expect(result.action).toBe('sent');
     expect(result.content.trim().length).toBeGreaterThan(0);
     expect(result.content).toContain('Jordan');
     expect(result.content).toContain('Sam');
+    expect(sendSMS).toHaveBeenCalledWith({
+      to: '+15555550123',
+      body: result.content,
+    });
     expect(insertedDraft).toMatchObject({
       spaceId: 's1',
       contactId: 'c1',
       channel: 'sms',
-      status: 'pending',
+      status: 'sent',
     });
-    expect(['sent', 'live', 'booked']).not.toContain(insertedDraft?.status);
+    expect(insertedDraft?.status).not.toBe('pending');
     expect(String(insertedDraft?.content ?? '')).not.toMatch(/\b(sent|live|booked|reserved|locked|held)\b/i);
-    expect(sendSMS).not.toHaveBeenCalled();
+    expect(String(insertedDraft?.reasoning ?? '')).not.toMatch(/awaiting approval|Never sent|draft parked/i);
+  });
+
+  it('fails with a real error when Telnyx credentials are missing — never parks pending', async () => {
+    seedHappyPath();
+    delete process.env.TELNYX_API_KEY;
+    delete process.env.TELNYX_FROM_NUMBER;
+    await expect(
+      draftTourFollowUpForContact({
+        spaceId: 's1',
+        contactId: 'c1',
+        tourId: 't1',
+        now: new Date('2026-08-21T18:05:00Z'),
+      }),
+    ).rejects.toThrow(/Telnyx credentials missing/);
+    expect(insertedDraft).toBeNull();
+    expect(updatedDraft).toBeNull();
   });
 
   it('skips when no completed tour exists — do not invent the event', async () => {
@@ -301,12 +332,12 @@ describe('draftTourFollowUpForContact', () => {
     expect(sendSMS).not.toHaveBeenCalled();
   });
 
-  it('returns an existing non-empty pending tour-follow-up instead of stacking another', async () => {
+  it('returns an existing sent tour-follow-up instead of sending a second one', async () => {
     seedHappyPath([
       {
         id: 'd_old',
         content: 'Hi Sam — Jordan here. Thoughts on 1422 Pine? Ready to talk next?',
-        status: 'pending',
+        status: 'sent',
         channel: 'sms',
         reasoning: TOUR_REASON,
         createdAt: '2026-08-21T18:00:00.000Z',
@@ -315,13 +346,13 @@ describe('draftTourFollowUpForContact', () => {
     const result = await draftTourFollowUpForContact({ spaceId: 's1', contactId: 'c1' });
     expect(result.action).toBe('deduped');
     expect(result.draftId).toBe('d_old');
-    expect(result.sent).toBe(false);
-    expect(result.status).toBe('pending');
+    expect(result.sent).toBe(true);
+    expect(result.status).toBe('sent');
     expect(insertedDraft).toBeNull();
     expect(sendSMS).not.toHaveBeenCalled();
   });
 
-  it('does not treat a pending first-touch as the tour-follow-up stub', async () => {
+  it('does not treat a leftover pending first-touch as the tour-follow-up stub', async () => {
     seedHappyPath([
       {
         id: 'd_first',
@@ -333,14 +364,14 @@ describe('draftTourFollowUpForContact', () => {
       },
     ]);
     const result = await draftTourFollowUpForContact({ spaceId: 's1', contactId: 'c1' });
-    expect(result.action).toBe('drafted');
+    expect(result.action).toBe('sent');
     expect(result.draftId).not.toBe('d_first');
     expect(insertedDraft?.reasoning).toMatch(/Tour-completed follow-up SMS/);
-    expect(insertedDraft?.status).toBe('pending');
-    expect(sendSMS).not.toHaveBeenCalled();
+    expect(insertedDraft?.status).toBe('sent');
+    expect(sendSMS).toHaveBeenCalled();
   });
 
-  it('fills an empty pending tour-follow-up stub so the draft becomes real', async () => {
+  it('fills an empty tour-follow-up stub after a real send', async () => {
     seedHappyPath([
       {
         id: 'd_empty',
@@ -359,12 +390,12 @@ describe('draftTourFollowUpForContact', () => {
     expect(result.action).toBe('filled');
     expect(result.draftId).toBe('d_empty');
     expect(result.content.trim().length).toBeGreaterThan(0);
-    expect(result.status).toBe('pending');
-    expect(result.sent).toBe(false);
+    expect(result.status).toBe('sent');
+    expect(result.sent).toBe(true);
+    expect(sendSMS).toHaveBeenCalled();
     expect(updatedDraft?.content).toBe(result.content);
-    expect(updatedDraft?.status).toBe('pending');
-    expect(['sent', 'live', 'booked']).not.toContain(updatedDraft?.status);
-    expect(sendSMS).not.toHaveBeenCalled();
+    expect(updatedDraft?.status).toBe('sent');
+    expect(updatedDraft?.status).not.toBe('pending');
   });
 
   it('distinguishes tour-follow-up drafts from first-touch', () => {
