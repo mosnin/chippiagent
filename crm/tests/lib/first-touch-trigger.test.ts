@@ -86,6 +86,28 @@ describe('fireAgentTrigger first-touch', () => {
     expect(draftFirstTouchForLead).not.toHaveBeenCalled();
   });
 
+  it('finishes the Modal wake before returning when after() is unavailable', async () => {
+    let modalDone = false;
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes('/incr/')) return new Response(JSON.stringify({ result: 1 }), { status: 200 });
+      if (url.includes('/expire/')) return new Response('OK', { status: 200 });
+      if (url.includes('/set/')) return new Response(JSON.stringify({ result: 'OK' }), { status: 200 });
+      if (url.includes('/rpush/') || url.includes('/lpush/') || url.includes('/ltrim/')) {
+        return new Response('OK', { status: 200 });
+      }
+      if (url.startsWith('https://modal.example.com')) {
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        modalDone = true;
+        return new Response('OK', { status: 200 });
+      }
+      return new Response('not found', { status: 404 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await fireAgentTrigger({ spaceId: 's1', event: 'new_lead', contactId: 'c1' });
+    expect(result.firedImmediately).toBe(true);
+    expect(modalDone).toBe(true);
+  });
+
   it('still drafts when Redis is down — the text cannot wait on the queue', async () => {
     delete process.env.KV_REST_API_URL;
     delete process.env.KV_REST_API_TOKEN;

@@ -5,7 +5,7 @@ No Modal-side scheduling — runs are kicked off from the Next.js side
 trigger) which calls these endpoints.
 
   POST  chat_turn          — interactive chat surface (called by /api/ai/task)
-  POST  run_now_webhook    — autonomous run for a single space (or trigger-drain)
+  POST  run_now_webhook    — accept a wake and spawn run_space (do not run inline)
   POST  run_swarm_endpoint — swarm execution (called fire-and-forget by /api/swarm)
         run_space          — plain function for local testing / cron drains
 
@@ -118,8 +118,13 @@ secrets = [modal.Secret.from_name("chippi-secrets")]
 # ---------------------------------------------------------------------------
 
 @app.function(secrets=secrets, timeout=600)
-async def run_space(space_id: str) -> None:
-    """Run Chippi for one space. Useful for local testing / cron drains."""
+async def run_space(space_id: str, instruction: str = "") -> None:
+    """Run Chippi for one space. Detached worker for webhook wakes / cron drains.
+
+    `instruction` is a routine's standing text. Empty means drain triggers
+    or sweep. Lives on this function — not the HTTP handler — so a client
+    abort cannot cancel the run after the trigger was already popped.
+    """
     import sys
     sys.path.insert(0, "/app")
 
@@ -147,7 +152,7 @@ async def run_space(space_id: str) -> None:
         agent_settings = AgentSettings.model_validate(sr.data)
         space = Space(id=spr.data["id"], slug=spr.data["slug"], name=spr.data["name"])
 
-        await run_agent_for_space(space, agent_settings)
+        await run_agent_for_space(space, agent_settings, instruction=instruction or None)
         logger.info("run_space_done", space_id=space_id)
 
     except Exception as e:
@@ -160,19 +165,28 @@ async def run_space(space_id: str) -> None:
 # Web endpoint — autonomous run from the UI / trigger queue
 # ---------------------------------------------------------------------------
 
-@app.function(secrets=secrets, timeout=600)
+@app.function(secrets=secrets, timeout=60)
 @modal.fastapi_endpoint(method="POST")
 async def run_now_webhook(item: dict) -> dict:
-    """HTTP webhook that runs Chippi autonomously for a space.
+    """Accept a wake and spawn a detached Chippi run.
+
+    Callers (trigger wake, Run now, sweep, routines) abort or fire-and-forget.
+    Running the agent inline ties the job to that HTTP connection: Modal
+    cancels on disconnect, `CancelledError` is not `Exception`, and a
+    popped Redis trigger is dropped — Chippi never acts.
+
+    This handler only authenticates and `run_space.spawn`s. The worker has
+    its own 600s timeout and no client to hang up.
 
     Set MODAL_WEBHOOK_URL in the Next.js env to the URL printed by
     `modal deploy`. Secured with AGENT_INTERNAL_SECRET.
     """
     import os
-    import sys
-    sys.path.insert(0, "/app")
 
     try:
+        if not isinstance(item, dict):
+            return {"error": "invalid body"}
+
         expected = os.environ.get("AGENT_INTERNAL_SECRET", "")
         secret = (item.get("secret") or "")
         if not expected or secret != expected:
@@ -189,30 +203,16 @@ async def run_now_webhook(item: dict) -> dict:
             raw_instruction.strip()[:600] if isinstance(raw_instruction, str) else ""
         )
 
-        from db import supabase
-        from schemas import AgentSettings, Space
-        from orchestrator import run_agent_for_space
-
-        db = await supabase()
-        sr = await (
-            db.table("AgentSettings").select("*").eq("spaceId", space_id).maybe_single().execute()
-        )
-        spr = await (
-            db.table("Space").select("id,slug,name").eq("id", space_id).maybe_single().execute()
-        )
-        if not sr.data or not spr.data:
-            return {"error": f"space or agent settings not found: {space_id}"}
-
-        await run_agent_for_space(
-            Space(id=spr.data["id"], slug=spr.data["slug"], name=spr.data["name"]),
-            AgentSettings.model_validate(sr.data),
-            instruction=instruction or None,
-        )
-        return {"ok": True, "space_id": space_id}
+        run_space.spawn(space_id, instruction)
+        return {"ok": True, "space_id": space_id, "accepted": True}
 
     except Exception as e:
         masked_error = mask_secrets(str(e))
-        logger.error("modal_run_now_webhook_failed", error=masked_error, space_id=item.get("space_id") if isinstance(item, dict) else None)
+        logger.error(
+            "modal_run_now_webhook_failed",
+            error=masked_error,
+            space_id=item.get("space_id") if isinstance(item, dict) else None,
+        )
         raise
 
 

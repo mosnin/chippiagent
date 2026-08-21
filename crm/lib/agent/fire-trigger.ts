@@ -18,7 +18,8 @@
  *   3. Dedupe within DEDUPE_WINDOW_S using the bucket pattern.
  *   4. RPUSH the trigger to `agent:triggers:{spaceId}` (FIFO queue).
  *   5. If event is in AGENT_IMMEDIATE_EVENTS and MODAL_WEBHOOK_URL is set,
- *      fire the Modal webhook immediately (fire-and-forget).
+ *      wake Modal. The POST is held past the route return (`after`) so the
+ *      Vercel isolate cannot cancel it. An unawaited fetch never left.
  *   6. Record the outcome to `agent:trigger:events:{spaceId}` for audit.
  *
  * Never throws — returns `{queued:false, reason}` instead. Callers in
@@ -26,6 +27,7 @@
  * write; the parent operation is what the user asked for.
  */
 
+import { after } from 'next/server';
 import {
   isInboundLeadEvent,
   isInboundMessageEvent,
@@ -240,15 +242,26 @@ export async function fireAgentTrigger(input: FireTriggerInput): Promise<FireTri
 
   let firedImmediately = false;
   if (immediateEvents.has(input.event) && MODAL_WEBHOOK_URL && AGENT_INTERNAL_SECRET) {
-    // Fire-and-forget — the trigger is already queued in Redis as a fallback.
-    fetch(MODAL_WEBHOOK_URL, {
+    // The trigger is already in Redis. The wake must actually leave this
+    // isolate — an unawaited fetch is cancelled when the route returns, so
+    // Modal never sees the POST and Chippi never starts.
+    const wake = fetch(MODAL_WEBHOOK_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ space_id: input.spaceId, secret: AGENT_INTERNAL_SECRET }),
-    }).catch(() => {
-      // Trigger remains in Redis for the next sweep — no data loss.
     });
-    firedImmediately = true;
+    try {
+      after(() => wake.catch(() => undefined));
+      firedImmediately = true;
+    } catch {
+      // after() throws outside a Next.js request (tests, scripts).
+      try {
+        const res = await wake;
+        firedImmediately = res.ok;
+      } catch {
+        // Trigger remains in Redis for the next sweep — no data loss.
+      }
+    }
   }
 
   await recordOutcome(kvUrl, kvToken, input, firedImmediately ? 'queued_modal' : 'queued');
