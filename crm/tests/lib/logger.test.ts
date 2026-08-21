@@ -70,6 +70,41 @@ describe('logger', () => {
     expect(payload.payload.safe).toBe('ok');
   });
 
+  it('redacts secret-named keys and secret-shaped values', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('LOG_LEVEL', 'info');
+    const { logger } = await import('@/lib/logger');
+
+    // Built at runtime so the file never contains a scanner-shaped literal.
+    const openrouterShaped = ['sk', 'or', 'v1', 'thisisnotarealkeyvalue'].join('-');
+    const openaiShaped = ['sk', 'proj', 'abcdefghijklmnopqrstuv'].join('-');
+    logger.info('creds', {
+      apiKey: openrouterShaped,
+      authorization: `Bearer ${['eyJ', 'hbGciOiJub25lIiwidHlwIjoiSldUIn0', 'e30', 'fake'].join('.')}`,
+      note: `provider said Incorrect API key provided: ${openaiShaped}`,
+    });
+
+    const payload = JSON.parse(logSpy.mock.calls[0][0] as string);
+    expect(payload.apiKey).toBe('[REDACTED]');
+    expect(payload.authorization).toBe('[REDACTED]');
+    expect(payload.note).not.toContain(openaiShaped);
+    expect(payload.note).toContain('[REDACTED]');
+  });
+
+  it('redacts secret material inside Error messages', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('LOG_LEVEL', 'info');
+    const { logger } = await import('@/lib/logger');
+
+    const stripeShaped = ['sk', 'test', 'xxFAKEKEYNOTFROMSTRIPE'].join('_');
+    logger.error('boom', { spaceId: 'abc' }, new Error(`Invalid API Key provided: ${stripeShaped}`));
+
+    const payload = JSON.parse(errorSpy.mock.calls[0][0] as string);
+    expect(payload.err.message).not.toContain(stripeShaped);
+    expect(payload.err.message).toContain('[REDACTED]');
+    expect(payload.err.stack).toBeUndefined();
+  });
+
   it('respects LOG_LEVEL threshold', async () => {
     vi.stubEnv('NODE_ENV', 'production');
     vi.stubEnv('LOG_LEVEL', 'warn');

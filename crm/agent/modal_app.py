@@ -32,10 +32,11 @@ Sandbox economics — why we stay on Modal (audit, 2026-Q2):
 
 from __future__ import annotations
 
-import modal
-import re
-import structlog
+import sys
 from pathlib import Path
+
+import modal
+import structlog
 
 logger = structlog.get_logger(__name__)
 
@@ -44,26 +45,10 @@ logger = structlog.get_logger(__name__)
 # mounts the WRONG dir at /app — db.py et al land at /app/agent/* and every
 # import inside chat_turn fails with ModuleNotFoundError.
 _AGENT_DIR = Path(__file__).resolve().parent
+if str(_AGENT_DIR) not in sys.path:
+    sys.path.insert(0, str(_AGENT_DIR))
 
-# ---------------------------------------------------------------------------
-# Secret masking — applied to all log output that includes external data
-# ---------------------------------------------------------------------------
-
-_SECRET_PATTERNS = [
-    (re.compile(r'sk-[A-Za-z0-9]{20,}'), 'sk-[REDACTED]'),
-    (re.compile(r'Bearer\s+[A-Za-z0-9\-._~+/]+=*'), 'Bearer [REDACTED]'),
-    (re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'), '[email]'),
-    (re.compile(r'\+?1?\s*\(?\d{3}\)?[\s.\-]?\d{3}[\s.\-]?\d{4}'), '[phone]'),
-    (re.compile(r'ey[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+'), '[jwt]'),
-]
-
-
-def mask_secrets(text: str) -> str:
-    if not isinstance(text, str):
-        text = str(text)
-    for pattern, replacement in _SECRET_PATTERNS:
-        text = pattern.sub(replacement, text)
-    return text
+from secret_mask import CLIENT_ERROR_MESSAGE, mask_secrets  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Image
@@ -153,7 +138,7 @@ async def run_space(space_id: str) -> None:
     except Exception as e:
         masked_error = mask_secrets(str(e))
         logger.error("modal_run_space_failed", error=masked_error, space_id=space_id)
-        raise
+        raise RuntimeError(CLIENT_ERROR_MESSAGE) from None
 
 
 # ---------------------------------------------------------------------------
@@ -213,7 +198,7 @@ async def run_now_webhook(item: dict) -> dict:
     except Exception as e:
         masked_error = mask_secrets(str(e))
         logger.error("modal_run_now_webhook_failed", error=masked_error, space_id=item.get("space_id") if isinstance(item, dict) else None)
-        raise
+        return {"error": CLIENT_ERROR_MESSAGE}
 
 
 # ---------------------------------------------------------------------------
@@ -247,8 +232,8 @@ async def run_swarm_endpoint(payload: dict) -> dict:
         await run_swarm(payload)
         return {"status": "completed"}
     except Exception as exc:
-        logger.error("run_swarm_endpoint_error", error=str(exc))
-        return {"status": "failed", "error": str(exc)}
+        logger.error("run_swarm_endpoint_error", error=mask_secrets(str(exc)))
+        return {"status": "failed", "error": CLIENT_ERROR_MESSAGE}
 
 
 # ---------------------------------------------------------------------------
@@ -529,7 +514,8 @@ async def chat_turn(item: dict):
                 model=resolved_model,
             )
         except Exception as e:
-            err = json.dumps({"type": "error", "message": f"agent build failed: {e}"})
+            logger.error("chat_turn_agent_build_failed", error=mask_secrets(str(e)), space_id=space_id)
+            err = json.dumps({"type": "error", "message": CLIENT_ERROR_MESSAGE})
             yield f"data: {err}\n\n"
             return
 
@@ -611,7 +597,7 @@ async def chat_turn(item: dict):
                     continue
                 masked_error = mask_secrets(err_str)
                 logger.error("chat_turn_stream_failed", error=masked_error, space_id=space_id)
-                err = json.dumps({"type": "error", "message": masked_error})
+                err = json.dumps({"type": "error", "message": CLIENT_ERROR_MESSAGE})
                 yield f"data: {err}\n\n"
                 return
 

@@ -18,6 +18,7 @@ from openai import AsyncOpenAI
 from config import settings
 from db import supabase as get_supabase
 from llm import configure_agents_sdk, get_llm_client, openai_model, resolve_chat_model
+from secret_mask import CLIENT_ERROR_MESSAGE, mask_secrets
 
 logger = structlog.get_logger(__name__)
 
@@ -124,15 +125,15 @@ async def run_member(db, swarm_run_id: str, member: dict, space_id: str) -> None
         }, member_id)
 
     except Exception as exc:
-        logger.error("swarm_member_failed", member_id=member_id, error=str(exc))
+        logger.error("swarm_member_failed", member_id=member_id, error=mask_secrets(str(exc)))
         await db.table("SwarmMember").update({
             "status": "failed",
-            "output": f"Error: {exc}",
+            "output": CLIENT_ERROR_MESSAGE,
             "completedAt": datetime.now(timezone.utc).isoformat(),
         }).eq("id", member_id).execute()
         await emit_event(db, swarm_run_id, "agent_failed", {
             "name": member["name"],
-            "error": str(exc),
+            "error": CLIENT_ERROR_MESSAGE,
         }, member_id)
 
 
@@ -247,10 +248,10 @@ async def run_swarm(payload: dict) -> None:
         await emit_event(db, swarm_run_id, "swarm_completed", {"result": final_result})
 
     except Exception as exc:
-        logger.error("swarm_failed", swarm_run_id=swarm_run_id, error=str(exc))
+        logger.error("swarm_failed", swarm_run_id=swarm_run_id, error=mask_secrets(str(exc)))
         await db.table("SwarmRun").update({
             "status": "failed",
-            "errorMessage": str(exc),
+            "errorMessage": CLIENT_ERROR_MESSAGE,
             "completedAt": datetime.now(timezone.utc).isoformat(),
         }).eq("id", swarm_run_id).execute()
-        await emit_event(db, swarm_run_id, "swarm_failed", {"error": str(exc)})
+        await emit_event(db, swarm_run_id, "swarm_failed", {"error": CLIENT_ERROR_MESSAGE})
