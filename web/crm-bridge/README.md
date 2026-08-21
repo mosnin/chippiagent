@@ -63,7 +63,7 @@ Rewire `crm/app/api/ai/task/route.ts` to POST to one of the framework's `gateway
 When option (b) becomes worth doing:
 
 - We want a single agent runtime serving both the CRM chat surface **and** other channels (Telegram, Slack, WhatsApp) for the same workspace, with one shared conversation state.
-- The framework's session/run/event model (with `/v1/runs/{id}/approval` for human-in-the-loop, `/v1/runs/{id}/stop` for interruption) becomes load-bearing for CRM UX that the Modal proxy can't deliver as cleanly.
+- The framework's session/run/event model (with `/v1/runs/{id}/stop` for interruption) becomes load-bearing for CRM UX that the Modal proxy can't deliver as cleanly.
 - Operational cost or reliability of Modal swings hard enough that re-platforming pays for itself (see the audit note in `modal_app.py` — currently Modal Standard is the right call).
 
 The concrete contract for option (b) is in **`SPEC.md`** — endpoint, request/response shapes, auth, streaming, the exact mapping from today's Modal `chat_turn` payload to a framework-native call.
@@ -74,7 +74,7 @@ The concrete contract for option (b) is in **`SPEC.md`** — endpoint, request/r
 
 These need a human decision before option (b) can be picked up:
 
-1. **Which endpoint?** `POST /v1/responses` (stateful, matches the CRM's per-conversation persistence) or `POST /v1/runs` (async, lifecycle events, approval/stop). The spec leans toward `/v1/responses` for the chat surface and reserves `/v1/runs` for autonomous workspace runs.
+1. **Which endpoint?** `POST /v1/responses` (stateful, matches the CRM's per-conversation persistence) or `POST /v1/runs` (async, lifecycle events, stop). The spec leans toward `/v1/responses` for the chat surface and reserves `/v1/runs` for autonomous workspace runs.
 2. **Multi-tenant auth.** The framework's gateway today assumes single-tenant (a developer running their own chippi). Option (b) requires either a tenant-scoping header convention (`X-Workspace-Id` + a shared secret) or a real auth middleware that resolves a workspace before the agent loop runs.
 3. **Tool loading per workspace.** The CRM dynamically loads each realtor's Composio toolkits at turn start (Gmail, Slack, HubSpot etc., scoped by Clerk `user_id`). The framework loads tools at agent build time. Option (b) requires the framework to either accept a per-request `extra_tools` payload or expose a "build agent for workspace" hook the gateway can call.
 4. **Persistence boundary.** Today the Next.js proxy owns persistence (Supabase `Conversation` / `Message` / `Attachment` tables). The framework owns its own session/response stores. Option (b) needs a clear answer: does Next.js stay the source of truth and the framework is stateless, or does the framework become the source of truth and Next.js becomes a thin reader?
