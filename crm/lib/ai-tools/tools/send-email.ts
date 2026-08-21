@@ -89,7 +89,11 @@ export const sendEmailTool = defineTool<typeof parameters, SendEmailResult>({
   // realistic follow-up sessions.
   rateLimit: { max: 50, windowSeconds: 3600 },
   summariseCall(args) {
-    const to = args.toEmail ?? (args.contactId ? `contact ${args.contactId.slice(0, 8)}` : 'a contact');
+    // Must match handler precedence: contactId wins. Preferring toEmail
+    // here would show Alice on the approval card and then send to Bob.
+    const to = args.contactId
+      ? `contact ${args.contactId.slice(0, 8)}`
+      : (args.toEmail ?? 'a contact');
     return `Email ${to} — "${args.subject}"`;
   },
 
@@ -121,6 +125,15 @@ export const sendEmailTool = defineTool<typeof parameters, SendEmailResult>({
       if (!contact.email) {
         return {
           summary: `${contact.name} has no email on file — add one before sending.`,
+          display: 'error',
+        };
+      }
+      if (
+        args.toEmail &&
+        contact.email.toLowerCase() !== args.toEmail.toLowerCase()
+      ) {
+        return {
+          summary: `Refusing send: ${contact.name} is ${contact.email}, not ${args.toEmail}.`,
           display: 'error',
         };
       }

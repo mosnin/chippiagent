@@ -269,12 +269,24 @@ export interface SendEmailFromCRMParams {
 }
 
 export async function sendEmailFromCRM(params: SendEmailFromCRMParams): Promise<void> {
-  if (!process.env.RESEND_API_KEY) { logger.warn('[email] RESEND_API_KEY not set — skipping'); return; }
+  const { toEmail, fromName, replyTo, subject, body, attachments } = params;
+
+  // Fail closed. Callers (send_email tool, /api/agent/send, contact compose)
+  // treat a resolved promise as "sent". Swallowing a missing key or a
+  // Resend error used to log-and-return, so the realtor saw success and
+  // the activity feed recorded a send that never left the building.
+  if (!toEmail.includes('@')) {
+    logger.error('[email] CRM email refused — recipient missing or invalid');
+    throw new Error('Recipient email is missing or invalid');
+  }
+  if (!process.env.RESEND_API_KEY) {
+    logger.error('[email] RESEND_API_KEY not set — refusing send');
+    throw new Error('Email is not configured (RESEND_API_KEY missing)');
+  }
+
   const { Resend } = await import('resend');
   const resend = new Resend(process.env.RESEND_API_KEY);
   const FROM = getFromAddress();
-
-  const { toEmail, fromName, replyTo, subject, body, attachments } = params;
 
   const html = `
 <!DOCTYPE html>
@@ -313,11 +325,12 @@ export async function sendEmailFromCRM(params: SendEmailFromCRMParams): Promise<
     });
     if (result.error) {
       logger.error('[email] CRM email: Resend API error', { to: toEmail, resendError: result.error });
-    } else {
-      logger.info('[email] CRM email sent', { to: toEmail, messageId: result.data?.id });
+      throw new Error(result.error.message || 'Resend API error');
     }
+    logger.info('[email] CRM email sent', { to: toEmail, messageId: result.data?.id });
   } catch (err) {
     logger.error('[email] CRM email failed', { to: toEmail }, err);
+    throw err;
   }
 }
 

@@ -128,10 +128,11 @@ async function deliverViaInbox(
       },
     });
 
-    // The SDK's ToolExecuteResponse has `successful` and `error`. Map to
-    // our shape so the caller never needs to know which provider we used.
+    // Fail closed. `successful === false` used to be the only reject;
+    // a missing/undefined field then marked the draft sent. Only an
+    // explicit successful=true counts as delivered.
     const successful = (res as { successful?: boolean }).successful;
-    if (successful === false) {
+    if (successful !== true) {
       const err = (res as { error?: string | null }).error ?? 'inbox_send_failed';
       logger.warn('[delivery] inbox send returned not-successful', {
         toolkit,

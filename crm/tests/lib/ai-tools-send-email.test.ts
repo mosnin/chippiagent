@@ -88,6 +88,17 @@ describe('sendEmailTool schema', () => {
   it('requires approval before the handler runs', () => {
     expect(sendEmailTool.requiresApproval).toBe(true);
   });
+
+  it('summarises contactId, not a conflicting toEmail', () => {
+    expect(
+      sendEmailTool.summariseCall({
+        contactId: 'c_alice01',
+        toEmail: 'bob@elsewhere.com',
+        subject: 'Tour Friday',
+        body: 'See you then.',
+      }),
+    ).toBe('Email contact c_alice0 — "Tour Friday"');
+  });
 });
 
 describe('sendEmailTool handler — contactId path', () => {
@@ -142,6 +153,50 @@ describe('sendEmailTool handler — contactId path', () => {
     expect(sendEmailFromCRMMock).not.toHaveBeenCalled();
     expect(result.summary).toMatch(/No contact with id/);
     expect(result.display).toBe('error');
+  });
+
+  it('refuses when toEmail disagrees with the contact on file', async () => {
+    mockByTable = {
+      Contact: {
+        single: { id: 'c_1', email: 'jane@example.com', name: 'Jane' },
+      },
+    };
+    const result = await sendEmailTool.handler(
+      {
+        contactId: 'c_1',
+        toEmail: 'bob@elsewhere.com',
+        subject: 'Hi',
+        body: 'Hi.',
+      },
+      makeCtx(),
+    );
+    expect(sendEmailFromCRMMock).not.toHaveBeenCalled();
+    expect(result.display).toBe('error');
+    expect(result.summary).toMatch(/jane@example.com/);
+    expect(result.summary).toMatch(/bob@elsewhere.com/);
+  });
+
+  it('sends when contactId and toEmail name the same person', async () => {
+    mockByTable = {
+      Contact: {
+        single: { id: 'c_1', email: 'jane@example.com', name: 'Jane' },
+      },
+      SpaceSetting: { single: { businessName: 'Jane Realty' } },
+    };
+    const result = await sendEmailTool.handler(
+      {
+        contactId: 'c_1',
+        toEmail: 'Jane@Example.com',
+        subject: 'Tour Friday',
+        body: 'Looking forward to it.',
+      },
+      makeCtx(),
+    );
+    expect(sendEmailFromCRMMock).toHaveBeenCalledTimes(1);
+    expect((sendEmailFromCRMMock.mock.calls as unknown[][])[0][0]).toMatchObject({
+      toEmail: 'jane@example.com',
+    });
+    expect(result.display).toBe('success');
   });
 });
 
