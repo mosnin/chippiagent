@@ -674,7 +674,9 @@ async def _run_locked(
         return
 
     except Exception as exc:
-        log.exception("agent_run_failed")
+        # Do not log.exception — provider SDKs embed API keys in the
+        # traceback / message. Masked string only.
+        log.error("agent_run_failed", error=mask_secrets(str(exc)))
         # Re-queue so a crashed run doesn't silently drop the realtor's
         # events; the per-trigger attempt cap stops a poison trigger looping.
         await requeue_triggers(space.id, triggers, increment_attempts=True)

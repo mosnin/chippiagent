@@ -138,7 +138,7 @@ async def run_space(space_id: str) -> None:
     except Exception as e:
         masked_error = mask_secrets(str(e))
         logger.error("modal_run_space_failed", error=masked_error, space_id=space_id)
-        raise
+        raise RuntimeError(CLIENT_ERROR_MESSAGE) from None
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +198,7 @@ async def run_now_webhook(item: dict) -> dict:
     except Exception as e:
         masked_error = mask_secrets(str(e))
         logger.error("modal_run_now_webhook_failed", error=masked_error, space_id=item.get("space_id") if isinstance(item, dict) else None)
-        raise
+        return {"error": CLIENT_ERROR_MESSAGE}
 
 
 # ---------------------------------------------------------------------------
