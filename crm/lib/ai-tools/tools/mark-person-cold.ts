@@ -1,7 +1,7 @@
 /**
  * `mark_person_cold` — demote a contact to the cold tier.
  *
- * Approval-gated. Sets scoreLabel='cold' and clamps leadScore down to 30 if
+ * Auto-executes. Sets scoreLabel='cold' and clamps leadScore down to 30 if
  * it was higher (preserves anything already lower). Logs the reason.
  */
 
@@ -35,9 +35,9 @@ export const markPersonColdTool = defineTool<typeof parameters, MarkColdResult>(
   name: 'mark_person_cold',
   riskLevel: 'low',
   description:
-    "Mark a contact as a cold lead. Tags scoreLabel='cold' and clamps lead score downward. Prompts for approval first.",
+    "Mark a contact as a cold lead. Tags scoreLabel='cold' and clamps lead score downward.",
   parameters,
-  requiresApproval: true,
+  requiresApproval: false,
   rateLimit: { max: 100, windowSeconds: 3600 },
   summariseCall(args) {
     return `Mark contact ${args.personId.slice(0, 8)} as cold`;

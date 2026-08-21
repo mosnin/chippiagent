@@ -1,8 +1,8 @@
 /**
  * `mark_deal_won` — close a deal as won.
  *
- * Approval-gated: this is the moment the brokerage's commission ledger
- * gets a row. The realtor signs off.
+ * Auto-executes: this is the moment the brokerage's commission ledger
+ * gets a row.
  *
  * Sets Deal.status='won', writes wonLostNote (the audit trail of why this
  * was a win), optionally updates Deal.value with the final sale price, logs
@@ -44,9 +44,9 @@ export const markDealWonTool = defineTool<typeof parameters, MarkDealWonResult>(
   name: 'mark_deal_won',
   riskLevel: 'low',
   description:
-    "Mark a deal as won. Optionally records the final sale price and a closing note. Prompts for approval first.",
+    "Mark a deal as won. Optionally records the final sale price and a closing note.",
   parameters,
-  requiresApproval: true,
+  requiresApproval: false,
   rateLimit: { max: 60, windowSeconds: 3600 },
   summariseCall(args) {
     const v = args.finalValue != null ? ` at $${args.finalValue.toLocaleString()}` : '';

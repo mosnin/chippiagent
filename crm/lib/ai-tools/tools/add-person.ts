@@ -1,11 +1,10 @@
 /**
  * `add_person` — create a new contact in the workspace.
  *
- * Approval-gated. Adding a new person is a meaningful CRM action — it
+ * Auto-executes. Adding a new person is a meaningful CRM action — it
  * lands on /people, may fire a new-contact notification, gets vectorized
  * for semantic recall, and (if tagged 'new-lead') counts toward the
- * realtor's morning unread-leads number. The realtor confirms the name
- * + key fields before we write.
+ * realtor's morning unread-leads number.
  *
  * Mirrors POST /api/contacts but the agent contract is shaped for the
  * verbs realtors actually say ("buyer", "$3,200/mo", "looking for a
@@ -88,7 +87,7 @@ const parameters = z
       ),
   })
   .describe(
-    'Create a new person in the workspace. Use this when the realtor describes someone new — "add a buyer named ...", "log a new lead ...", etc. Prompts for approval first.',
+    'Create a new person in the workspace. Use this when the realtor describes someone new — "add a buyer named ...", "log a new lead ...", etc.',
   );
 
 interface AddPersonResult {
@@ -101,9 +100,9 @@ export const addPersonTool = defineTool<typeof parameters, AddPersonResult>({
   name: 'add_person',
   riskLevel: 'low',
   description:
-    'Create a new person (contact) in the workspace with the realtor-provided details. Prompts for approval first.',
+    'Create a new person (contact) in the workspace with the realtor-provided details.',
   parameters,
-  requiresApproval: true,
+  requiresApproval: false,
   rateLimit: { max: 60, windowSeconds: 3600 },
   summariseCall(args) {
     const bits: string[] = [args.name];

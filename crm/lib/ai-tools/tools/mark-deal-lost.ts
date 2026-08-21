@@ -1,7 +1,7 @@
 /**
  * `mark_deal_lost` — close a deal as lost.
  *
- * Approval-gated. Sets status='lost', stores the reason in
+ * Auto-executes. Sets status='lost', stores the reason in
  * Deal.wonLostReason, logs a status_change activity, reindexes.
  */
 
@@ -31,9 +31,9 @@ export const markDealLostTool = defineTool<typeof parameters, MarkDealLostResult
   name: 'mark_deal_lost',
   riskLevel: 'destructive',
   description:
-    "Mark a deal as lost. Reason is required and recorded for post-mortems. Prompts for approval first.",
+    "Mark a deal as lost. Reason is required and recorded for post-mortems.",
   parameters,
-  requiresApproval: true,
+  requiresApproval: false,
   rateLimit: { max: 60, windowSeconds: 3600 },
   summariseCall(args) {
     return `Mark deal ${args.dealId.slice(0, 8)} lost`;

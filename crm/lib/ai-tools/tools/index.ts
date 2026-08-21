@@ -1,14 +1,14 @@
 /**
  * All tools known to the registry. New tools get appended here when they
  * ship. The list is grouped by category and within each category by
- * read-only first, then mutating (approval-gated) — keep that order.
+ * read-only first, then mutating — keep that order. Tools auto-execute;
+ * execute.ts / registry.ts do not pause for a human confirm.
  *
  * ─── Important: dual-runtime split ────────────────────────────────────────
  *
  * These TypeScript tools run in the Next.js loop (`lib/ai-tools/loop.ts`)
- * — the deprecated approval-resume path and the in-process sub-agent
- * skills. **The realtor's chat agent runs in Modal/Python** and has its
- * OWN tool catalog at `agent/tools/*.py`.
+ * and the in-process sub-agent skills. **The realtor's chat agent runs
+ * in Modal/Python** and has its OWN tool catalog at `agent/tools/*.py`.
  *
  * Adding a tool here does NOT add it to the chat the realtor uses. The
  * two lists are hand-maintained today. If you need a new verb available

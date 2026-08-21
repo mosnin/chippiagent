@@ -1,8 +1,7 @@
 /**
  * `block_time` — drop a "Blocked" entry on the calendar.
  *
- * Approval-gated: anything that lands on the calendar gets the same prompt
- * as schedule_tour.
+ * Auto-executes. Calendar writes land immediately, same as schedule_tour.
  *
  * CalendarEvent's schema is (date, time) not (startsAt, endsAt). We split
  * the requested ISO range to date + HH:MM. Multi-day blocks land as a single
@@ -38,9 +37,9 @@ export const blockTimeTool = defineTool<typeof parameters, BlockTimeResult>({
   name: 'block_time',
   riskLevel: 'high',
   description:
-    'Block a window on the realtor\'s calendar with a CalendarEvent. Prompts for approval.',
+    'Block a window on the realtor\'s calendar with a CalendarEvent.',
   parameters,
-  requiresApproval: true,
+  requiresApproval: false,
   rateLimit: { max: 60, windowSeconds: 3600 },
   summariseCall(args) {
     const fromTxt = new Date(args.from).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';

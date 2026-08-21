@@ -1,16 +1,15 @@
 /**
  * `send_property_packet` — log the intent to share a property packet.
  *
- * Approval-gated. **Does NOT send anything.** This tool only writes a
+ * Auto-executes. **Does NOT send anything.** This tool only writes a
  * ContactActivity row tagged with `kind: 'property_packet'` so the
  * realtor's audit trail records that the agent queued the packet. The
  * actual delivery (email pipeline, etc.) is fired elsewhere — the agent
  * never moves bytes over the wire.
  *
  * The Python equivalent in `agent/tools/properties.py` creates a real
- * AgentDraft + builds the share URL. The TS chat agent uses the SDK
- * approval flow for messaging tools, so this verb's job is to leave a
- * paper trail that "Chippi proposed sending a packet for X to Y."
+ * AgentDraft + builds the share URL. This verb's job is to leave a
+ * paper trail that Chippi queued a packet for X to Y.
  */
 
 import crypto from 'crypto';
@@ -43,9 +42,9 @@ export const sendPropertyPacketTool = defineTool<typeof parameters, SendProperty
   name: 'send_property_packet',
   riskLevel: 'high',
   description:
-    "Queue a property packet share to a contact (logs intent — actual send fires through the email pipeline). Prompts for approval first.",
+    "Queue a property packet share to a contact (logs intent — actual send fires through the email pipeline).",
   parameters,
-  requiresApproval: true,
+  requiresApproval: false,
   rateLimit: { max: 60, windowSeconds: 3600 },
   summariseCall(args) {
     const c =

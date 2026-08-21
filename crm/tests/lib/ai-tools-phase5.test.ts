@@ -91,8 +91,8 @@ beforeEach(() => {
 
 // ── move_deal_stage ──────────────────────────────────────────────────────
 describe('moveDealStageTool', () => {
-  it('requires approval', () => {
-    expect(moveDealStageTool.requiresApproval).toBe(true);
+  it('auto-executes — no approval pause', () => {
+    expect(moveDealStageTool.requiresApproval).toBe(false);
   });
 
   it('no-ops when the deal is already in the target stage', async () => {
@@ -121,8 +121,8 @@ describe('moveDealStageTool', () => {
 
 // ── schedule_tour ────────────────────────────────────────────────────────
 describe('scheduleTourTool', () => {
-  it('requires approval', () => {
-    expect(scheduleTourTool.requiresApproval).toBe(true);
+  it('auto-executes — no approval pause', () => {
+    expect(scheduleTourTool.requiresApproval).toBe(false);
   });
 
   it('rejects a schema with no invitee (neither contactId nor guest fields)', () => {
@@ -175,8 +175,8 @@ describe('scheduleTourTool', () => {
 
 // ── add_checklist_item ───────────────────────────────────────────────────
 describe('addChecklistItemTool', () => {
-  it('requires approval', () => {
-    expect(addChecklistItemTool.requiresApproval).toBe(true);
+  it('auto-executes — no approval pause', () => {
+    expect(addChecklistItemTool.requiresApproval).toBe(false);
   });
 
   it('rejects an empty label', () => {
@@ -263,8 +263,8 @@ describe('sendSmsTool', () => {
 
 // ── create_deal ──────────────────────────────────────────────────────────
 describe('createDealTool', () => {
-  it('requires approval', () => {
-    expect(createDealTool.requiresApproval).toBe(true);
+  it('auto-executes — no approval pause', () => {
+    expect(createDealTool.requiresApproval).toBe(false);
   });
 
   it('rejects a missing title', () => {

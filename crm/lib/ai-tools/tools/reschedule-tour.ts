@@ -1,8 +1,8 @@
 /**
  * `reschedule_tour` — move a Tour to a new start (and optional end) time.
  *
- * Approval-gated: tours are on calendars and inboxes; the realtor sees
- * the new time before we commit. Google Calendar sync runs server-side
+ * Auto-executes: tours are on calendars and inboxes; the new time
+ * lands immediately. Google Calendar sync runs server-side
  * on a separate cron job (see schedule-tour.ts), so we don't duplicate
  * it here — same stance as the create path.
  */
@@ -46,9 +46,9 @@ export const rescheduleTourTool = defineTool<typeof parameters, RescheduleTourRe
   name: 'reschedule_tour',
   riskLevel: 'low',
   description:
-    'Move a tour to a new time. Preserves the original duration unless newEndsAt is given. Prompts for approval first.',
+    'Move a tour to a new time. Preserves the original duration unless newEndsAt is given.',
   parameters,
-  requiresApproval: true,
+  requiresApproval: false,
   rateLimit: { max: 60, windowSeconds: 3600 },
   summariseCall(args) {
     const why = args.why ? ` — ${args.why}` : '';

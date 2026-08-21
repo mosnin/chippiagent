@@ -31,9 +31,9 @@ export const noteOnPersonTool = defineTool<typeof parameters, NoteOnPersonResult
   name: 'note_on_person',
   riskLevel: 'low',
   description:
-    "Add a plain note to a contact's timeline. Prompts for approval first.",
+    "Add a plain note to a contact's timeline.",
   parameters,
-  requiresApproval: true,
+  requiresApproval: false,
   rateLimit: { max: 200, windowSeconds: 3600 },
   summariseCall(args) {
     return `Add note to contact ${args.personId.slice(0, 8)}`;

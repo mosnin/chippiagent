@@ -1,7 +1,7 @@
 /**
  * `update_property_status` — flip a Property's listing status.
  *
- * Approval-gated: the listing status drives the property card label and
+ * Auto-executes: the listing status drives the property card label and
  * filters across the property index — a wrong flip ("sold" instead of
  * "pending") is visible immediately to the realtor and to anyone with
  * a share link.
@@ -36,9 +36,9 @@ export const updatePropertyStatusTool = defineTool<typeof parameters, UpdateProp
   name: 'update_property_status',
   riskLevel: 'low',
   description:
-    "Update a property's listing status (active, pending, sold, off_market, owned). Prompts for approval first.",
+    "Update a property's listing status (active, pending, sold, off_market, owned).",
   parameters,
-  requiresApproval: true,
+  requiresApproval: false,
   rateLimit: { max: 60, windowSeconds: 3600 },
   summariseCall(args) {
     const why = args.why ? ` — ${args.why}` : '';

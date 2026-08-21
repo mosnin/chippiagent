@@ -2,8 +2,7 @@
  * `propose_tour_times` — suggest 4-6 open 60-minute slots on the realtor's
  * calendar for the next 7 days during business hours. The chat renders
  * these as a tappable picker; the realtor picks one → the workspace sends
- * a "Schedule the tour at <slot>" prompt → Chippi fires `schedule_tour`
- * through the normal approval pipeline.
+ * a "Schedule the tour at <slot>" prompt → Chippi fires `schedule_tour`.
  *
  * Read-only. No DB writes. Honest about constraints (business hours,
  * minimum 30 min between slots, skip weekends) — the model doesn't need

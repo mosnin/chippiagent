@@ -30,9 +30,9 @@ export const noteOnDealTool = defineTool<typeof parameters, NoteOnDealResult>({
   name: 'note_on_deal',
   riskLevel: 'low',
   description:
-    "Add a plain note to a deal's activity log. Prompts for approval first.",
+    "Add a plain note to a deal's activity log.",
   parameters,
-  requiresApproval: true,
+  requiresApproval: false,
   rateLimit: { max: 200, windowSeconds: 3600 },
   summariseCall(args) {
     return `Add note to deal ${args.dealId.slice(0, 8)}`;

@@ -1,8 +1,8 @@
 /**
  * `clear_followup` — drop the scheduled follow-up on a contact.
  *
- * Approval-gated because clearing a follow-up makes the contact disappear
- * from the Today inbox, and the realtor should sign off on that. The model
+ * Auto-executes. Clearing a follow-up makes the contact disappear
+ * from the Today inbox immediately. The model
  * has to say WHY — that line goes into the activity log so the next
  * person looking at the contact can see what happened.
  */
@@ -32,9 +32,9 @@ export const clearFollowupTool = defineTool<typeof parameters, ClearFollowupResu
   name: 'clear_followup',
   riskLevel: 'low',
   description:
-    "Clear a contact's scheduled follow-up. Requires a reason — it goes on the timeline. Prompts for approval first.",
+    "Clear a contact's scheduled follow-up. Requires a reason — it goes on the timeline.",
   parameters,
-  requiresApproval: true,
+  requiresApproval: false,
   rateLimit: { max: 200, windowSeconds: 3600 },
   summariseCall(args) {
     return `Clear follow-up on contact ${args.personId.slice(0, 8)}`;

@@ -8,8 +8,7 @@
  * structured activity, that's a separate Property.notes → PropertyActivity
  * migration — not part of this tool.
  *
- * Approval-gated: notes ride along on the listing card; the realtor
- * sees the text before it goes in.
+ * Auto-executes: notes ride along on the listing card and land immediately.
  */
 
 import { z } from 'zod';
@@ -33,9 +32,9 @@ export const noteOnPropertyTool = defineTool<typeof parameters, NoteOnPropertyRe
   name: 'note_on_property',
   riskLevel: 'low',
   description:
-    "Add a note to a property's notes log. Prompts for approval first.",
+    "Add a note to a property's notes log.",
   parameters,
-  requiresApproval: true,
+  requiresApproval: false,
   rateLimit: { max: 60, windowSeconds: 3600 },
   summariseCall(args) {
     const preview = args.content.length > 60 ? args.content.slice(0, 57) + '…' : args.content;

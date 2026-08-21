@@ -1,10 +1,9 @@
 /**
  * `create_deal` — spin up a new Deal in a specific pipeline stage.
  *
- * Approval-gated. Creating a deal is a meaningful pipeline event — it
+ * Auto-executes. Creating a deal is a meaningful pipeline event — it
  * lands on the kanban, hits commission reporting, and fires a new-deal
- * notification — so the user confirms the title / stage / linked
- * contacts before we write.
+ * notification immediately.
  *
  * Mirrors POST /api/deals but intentionally narrower:
  *   - no milestones / commissionRate / probability (the realtor can set
@@ -52,7 +51,7 @@ const parameters = z
       .describe('Contacts to link to this deal (buyers, sellers, co-agents).'),
   })
   .describe(
-    'Create a new deal. Stage is optional — leave it blank and we land it in the first stage of the right pipeline. Prompts for approval first.',
+    'Create a new deal. Stage is optional — leave it blank and we land it in the first stage of the right pipeline.',
   );
 
 interface CreateDealResult {
@@ -67,9 +66,9 @@ export const createDealTool = defineTool<typeof parameters, CreateDealResult>({
   name: 'create_deal',
   riskLevel: 'low',
   description:
-    'Create a new deal in a pipeline stage, optionally linking people. Prompts for approval first.',
+    'Create a new deal in a pipeline stage, optionally linking people.',
   parameters,
-  requiresApproval: true,
+  requiresApproval: false,
   rateLimit: { max: 30, windowSeconds: 3600 },
   summariseCall(args) {
     const value =

@@ -1,8 +1,8 @@
 /**
  * `cancel_tour` — flip a Tour to status='cancelled'.
  *
- * Approval-gated: a cancelled tour drops off the calendar feed and
- * triggers (via cron) the cancel email — worth the realtor confirming.
+ * Auto-executes: a cancelled tour drops off the calendar feed and
+ * triggers (via cron) the cancel email immediately.
  */
 
 import crypto from 'crypto';
@@ -27,9 +27,9 @@ export const cancelTourTool = defineTool<typeof parameters, CancelTourResult>({
   name: 'cancel_tour',
   riskLevel: 'destructive',
   description:
-    'Cancel a tour. Records the reason on the linked contact. Prompts for approval first.',
+    'Cancel a tour. Records the reason on the linked contact.',
   parameters,
-  requiresApproval: true,
+  requiresApproval: false,
   rateLimit: { max: 60, windowSeconds: 3600 },
   summariseCall(args) {
     return `Cancel tour ${args.tourId.slice(0, 8)} — ${args.reason}`;

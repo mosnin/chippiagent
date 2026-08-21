@@ -5,19 +5,19 @@
  *   - named (short snake_case, surfaced to the model)
  *   - described (helps the model choose)
  *   - zod-validated on its arguments (both for the model's safety AND ours)
- *   - either auto-running (read-only) or permission-gated (mutations)
+ *   - executed immediately — no human confirm, approval card, or
+ *     "yes that's the move"
  *   - executed with a ToolContext that carries the caller's identity + space
  *
- * Read-only tools run immediately inside the loop. Mutating tools emit a
- * `permission_required` SSE event and pause until the user approves — see
- * lib/ai-tools/events.ts and phase 3.
+ * Every tool auto-executes. `execute.ts` and `registry.ts` do not pause
+ * the turn for realtor sign-off. `requiresApproval: true` remains on the
+ * type union so outbound send/draft tools owned by another agent still
+ * typecheck; it is catalog metadata, not a pause gate.
  *
  * The contract is enforced at the type level, not by markdown:
  *   - `requiresApproval: true | 'maybe'` REQUIRES `summariseCall` and
- *     `rateLimit`. The realtor sees that summary in the prompt; without it
- *     they're approving an opaque verb. The rate limit is the blast-radius
- *     cap. Both are non-optional for any tool that mutates state.
- *   - `requiresApproval: false` makes both optional — read tools are cheap.
+ *     `rateLimit` (audit line + blast-radius cap).
+ *   - `requiresApproval: false` makes both optional.
  *
  * Drift the types can't catch (snake_case, name uniqueness, description
  * length) is caught by `tests/lib/ai-tools-registry-contract.test.ts`,
@@ -27,7 +27,7 @@
 
 import type { z } from 'zod';
 
-// ── Risk level for autonomous agent approval gating ───────────────────────
+// ── Risk level for autonomous orchestrator classification ─────────────────
 
 /**
  * Machine-readable risk classification for the autonomous orchestrator.
@@ -109,14 +109,13 @@ interface BaseToolFields<TArgs, TData> {
   parameters: z.ZodType<TArgs>;
   /** The actual work. Must respect ctx.signal for cancellation. */
   handler: ToolHandler<TArgs, TData>;
-  /** Risk level for autonomous sweep approval gating. Defaults to 'safe'. */
+  /** Risk level for autonomous sweep classification. Defaults to 'safe'. */
   riskLevel?: RiskLevel;
 }
 
 /**
- * Read-only tool — runs without prompting. `summariseCall` and `rateLimit`
- * are optional because reads don't need a "what will happen if you approve?"
- * line and don't need a blast-radius cap (reads can't damage data).
+ * Auto-executing tool. `summariseCall` and `rateLimit` are optional —
+ * reads don't need an audit line or a blast-radius cap.
  */
 export interface ReadOnlyToolDefinition<TArgs = unknown, TData = unknown>
   extends BaseToolFields<TArgs, TData> {
@@ -126,19 +125,19 @@ export interface ReadOnlyToolDefinition<TArgs = unknown, TData = unknown>
 }
 
 /**
- * Mutating tool — pauses for user approval. `summariseCall` is REQUIRED so
- * the realtor sees what they're saying yes to. `rateLimit` is REQUIRED so
- * we cap blast radius even if the model goes wild.
+ * Mutating-shaped catalog entry. Kept so send/draft tools owned by
+ * another agent still compile. The loop does not pause on this flag.
+ * `summariseCall` is REQUIRED as an audit line. `rateLimit` is REQUIRED
+ * so we cap blast radius even if the model goes wild.
  */
 export interface MutatingToolDefinition<TArgs = unknown, TData = unknown>
   extends BaseToolFields<TArgs, TData> {
   requiresApproval: true | 'maybe';
-  /** Resolver for `'maybe'` — inspect args and decide approval inline. */
+  /** Unused by execute/registry — tools auto-execute. */
   shouldApprove?: (args: TArgs, ctx: ToolContext) => boolean;
   /**
-   * "What will happen if you approve?" Required because the realtor reads
-   * this line in the PermissionPromptView. A generic "Run mark_person_hot"
-   * is not acceptable — the contract is domain-specific.
+   * Audit line for the tool call. Domain-specific — a generic
+   * "Run mark_person_hot" is not acceptable.
    */
   summariseCall: (args: TArgs) => string;
   /**
@@ -157,9 +156,9 @@ export type ToolDefinition<TArgs = unknown, TData = unknown> =
 
 /**
  * Factory that preserves argument typing inside the handler so callers don't
- * have to annotate `args` themselves. The discriminated union enforces the
- * mutation/read split: TypeScript will refuse to compile a `requiresApproval:
- * true` tool that omits `summariseCall` or `rateLimit`.
+ * have to annotate `args` themselves. The discriminated union still requires
+ * `summariseCall` + `rateLimit` on any `requiresApproval: true` catalog
+ * entry. The loop never pauses for those fields.
  */
 export function defineTool<TSchema extends z.ZodType, TData = unknown>(
   def:

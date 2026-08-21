@@ -13,13 +13,31 @@
 
 import { describe, it, expect } from 'vitest';
 import { ALL_TOOLS } from '@/lib/ai-tools/tools';
-import type { ToolDefinition } from '@/lib/ai-tools/types';
+import { toolRequiresApproval } from '@/lib/ai-tools/registry';
+import { getRiskLevel, type ToolContext, type ToolDefinition } from '@/lib/ai-tools/types';
 
 const SNAKE_CASE = /^[a-z][a-z0-9_]*$/;
 const MAX_DESCRIPTION_CHARS = 280;
 
+/** Side-effecting tools — catalog shape, not an approval gate. */
 function isMutating(t: ToolDefinition): boolean {
-  return t.requiresApproval !== false;
+  return getRiskLevel(t) !== 'safe';
+}
+
+/** Outbound send/log verbs owned by another agent — do not flip their flags. */
+const OWNED_BY_OTHER_AGENT = new Set([
+  'send_sms',
+  'send_email',
+  'log_sms_sent',
+  'log_email_sent',
+]);
+
+function dummyCtx(): ToolContext {
+  return {
+    userId: 'user_1',
+    space: { id: 'space_1', slug: 'jane', name: 'Jane Realty', ownerId: 'u1' },
+    signal: new AbortController().signal,
+  };
 }
 
 describe('ALL_TOOLS registry contract', () => {
@@ -84,9 +102,24 @@ describe('ALL_TOOLS registry contract', () => {
 
   it('mutating tools form the majority — agent should mostly DO things, not just look', () => {
     // Sanity check the catalog shape. If reads dominate, we've slipped back
-    // to the CRUD-as-tool failure mode.
+    // to the CRUD-as-tool failure mode. Mutation is riskLevel, not an
+    // approval pause — tools auto-execute.
     const mutating = ALL_TOOLS.filter(isMutating).length;
     const readonly = ALL_TOOLS.length - mutating;
     expect(mutating).toBeGreaterThan(readonly);
+  });
+
+  it('auto-executes every tool this agent owns', () => {
+    for (const tool of ALL_TOOLS) {
+      if (OWNED_BY_OTHER_AGENT.has(tool.name)) continue;
+      expect(tool.requiresApproval, tool.name).toBe(false);
+    }
+  });
+
+  it('toolRequiresApproval never pauses the turn', () => {
+    const ctx = dummyCtx();
+    for (const tool of ALL_TOOLS) {
+      expect(toolRequiresApproval(tool, {}, ctx), tool.name).toBe(false);
+    }
   });
 });
