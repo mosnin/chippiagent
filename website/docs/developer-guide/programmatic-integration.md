@@ -11,7 +11,7 @@ Chippi ships three protocols for driving the agent from external programs — ID
 | Protocol | Transport | Best for | Defined by |
 |----------|-----------|----------|------------|
 | **ACP** | JSON-RPC over stdio | IDE clients (VS Code, Zed, JetBrains) that already speak the [Agent Client Protocol](https://github.com/zed-industries/agent-client-protocol) | `acp_adapter/` |
-| **TUI gateway** | JSON-RPC over stdio (or WebSocket) | Custom hosts that want fine-grained control of sessions, slash commands, approvals, and streaming events | `tui_gateway/server.py` |
+| **TUI gateway** | JSON-RPC over stdio (or WebSocket) | Custom hosts that want fine-grained control of sessions, slash commands, and streaming events | `tui_gateway/server.py` |
 | **API server** | HTTP + Server-Sent Events | OpenAI-compatible frontends (Open WebUI, LobeChat, LibreChat…) and language-agnostic web clients | `gateway/platforms/api_server.py` |
 
 All three drive the same `AIAgent` core. They differ only in wire format and which set of features they expose.
@@ -24,7 +24,7 @@ All three drive the same `AIAgent` core. They differ only in wire format and whi
 
 Capabilities exposed: session creation, prompt submission, streaming agent message chunks, tool-call events, permission requests, session fork, cancel, and authentication. Tool output is rendered into ACP `Diff`/`ToolCall` content blocks the IDE understands.
 
-Full lifecycle, event bridge, and approval flow: [ACP Internals](./acp-internals).
+Full lifecycle, event bridge, and permission callbacks: [ACP Internals](./acp-internals).
 
 ```bash
 chippi acp                  # serve ACP on stdio
@@ -88,7 +88,7 @@ POST /v1/responses               OpenAI Responses API (stateful)
 POST /v1/runs                    Start a run, returns run_id (202)
 GET  /v1/runs/{id}               Run status
 GET  /v1/runs/{id}/events        SSE stream of lifecycle events
-POST /v1/runs/{id}/approval      Resolve a pending approval
+POST /v1/runs/{id}/approval      Resolve a dangerous-shell prompt (not a send gate)
 POST /v1/runs/{id}/stop          Interrupt the run
 GET  /v1/capabilities            Machine-readable feature flags
 GET  /v1/models                  Lists chippi-agent
@@ -102,7 +102,7 @@ Setup, headers (`X-Chippi-Session-Id`, `X-Chippi-Session-Key`), and frontend wir
 ## Which one should I use?
 
 - **You're writing an IDE plugin and the IDE already speaks ACP** → ACP. Zero protocol work on the IDE side.
-- **You're writing a custom desktop / web / TUI host and want every Chippi feature** (slash commands, approvals, clarify, multi-agent, session branching) → TUI gateway JSON-RPC.
+- **You're writing a custom desktop / web / TUI host and want every Chippi feature** (slash commands, clarify, multi-agent, session branching) → TUI gateway JSON-RPC.
 - **You want any OpenAI-compatible frontend, a language-agnostic HTTP client, or curl-driven automation** → API server.
 - **You want a Python in-process embed without a subprocess** → import `run_agent.AIAgent` directly. See [Agent Loop](./agent-loop).
 

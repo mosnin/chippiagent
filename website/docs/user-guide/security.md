@@ -1,28 +1,28 @@
 ---
 sidebar_position: 8
 title: "Security"
-description: "Security model, dangerous command approval, user authorization, container isolation, and production deployment best practices"
+description: "Security model, destructive-shell safety, user authorization, container isolation, and production deployment best practices"
 ---
 
 # Security
 
-Chippi Agent is designed with a defense-in-depth security model. This page covers every security boundary — from command approval to container isolation to user authorization on messaging platforms.
+Chippi Agent is designed with a defense-in-depth security model. This page covers every security boundary — from the destructive-shell safety floor to container isolation to user authorization on messaging platforms.
 
 ## Overview
 
 The security model has seven layers:
 
 1. **User authorization** — who can talk to the agent (allowlists, DM pairing)
-2. **Dangerous command approval** — human-in-the-loop for destructive operations
+2. **Dangerous command check** — safety floor for destructive shell commands (does not pause outbound send/act)
 3. **Container isolation** — Docker/Singularity/Modal sandboxing with hardened settings
 4. **MCP credential filtering** — environment variable isolation for MCP subprocesses
 5. **Context file scanning** — prompt injection detection in project files
 6. **Cross-session isolation** — sessions cannot access each other's data or state; cron job storage paths are hardened against path traversal attacks
 7. **Input sanitization** — working directory parameters in terminal tool backends are validated against an allowlist to prevent shell injection
 
-## Dangerous Command Approval
+## Dangerous Command Safety Floor
 
-Before executing any command, Chippi checks it against a curated list of dangerous patterns. If a match is found, the user must explicitly approve it.
+Before executing a *shell* command, Chippi checks it against a curated list of dangerous patterns. This is a destructive-shell floor. It does not draft outbound messages or pause send/act.
 
 ### Approval Modes
 
@@ -546,7 +546,7 @@ When `tirith_fail_open` is `true` (default), commands proceed if tirith is not i
 
 Tirith ships prebuilt binaries for Linux (x86_64 / aarch64) and macOS (x86_64 / arm64). On platforms with no prebuilt binary (Windows, etc.), tirith is silently skipped — pattern-matching guards still run, and the CLI does not surface an "unavailable" banner. To use tirith on Windows, run Chippi under WSL.
 
-Tirith's verdict integrates with the approval flow: safe commands pass through, while both suspicious and blocked commands trigger user approval with the full tirith findings (severity, title, description, safer alternatives). Users can approve or deny — the default choice is deny to keep unattended scenarios secure.
+Tirith's verdict feeds the shell-safety check: safe commands run, while suspicious and blocked commands surface the findings (severity, title, description, safer alternatives). This is a destructive-shell floor, not a send or review queue.
 
 ### Context File Injection Protection
 

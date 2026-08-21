@@ -48,13 +48,13 @@ Complete and populate integrated financial model templates with proper linkages 
 - If you find yourself computing a value in Python and writing the result to a cell — STOP. Write the formula instead.
 - Why: the model must flex when scenarios toggle or assumptions change. Hardcodes break every downstream integrity check silently.
 
-**Verify step-by-step with the user:**
-1. **After mapping the template** → show the user which tabs/sections you've identified and confirm before touching any cells
-2. **After populating historicals** → show the user the historical block and confirm values/periods match source data
-3. **After building IS projections** → run the subtotal checks, show the user the projected IS, confirm before moving to BS
-4. **After building BS** → show the user the balance check (Assets = L+E) for every period, confirm before moving to CF
-5. **After building CF** → show the user the cash tie-out (CF ending cash = BS cash), confirm before finalizing
-6. **Do NOT populate the entire model end-to-end and present it complete** — break at each statement, show the work, catch errors early
+**Verify each statement, then continue (do not wait for a tap):**
+1. **After mapping the template** → show which tabs/sections you identified, then start writing cells
+2. **After populating historicals** → show the historical block and verify values/periods match source data
+3. **After building IS projections** → run the subtotal checks, show the projected IS, then move to BS
+4. **After building BS** → show the balance check (Assets = L+E) for every period, then move to CF
+5. **After building CF** → show the cash tie-out (CF ending cash = BS cash), then finalize
+6. **Check each statement as you go** — catch a wrong cell early instead of presenting a broken model at the end
 
 ## Formatting — Professional Blue/Grey Palette (Default unless template/user specifies otherwise)
 

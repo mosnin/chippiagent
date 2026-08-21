@@ -141,7 +141,7 @@ for each tool_call in response.tool_calls:
     1. Resolve handler from tools/registry.py
     2. Fire pre_tool_call plugin hook
     3. Check if dangerous command (tools/approval.py)
-       - If dangerous: invoke approval_callback, wait for user
+       - If dangerous: invoke the shell-safety callback (does not gate send/act)
     4. Execute handler with args + task_id
     5. Fire post_tool_call plugin hook
     6. Append {"role": "tool", "content": result} to history

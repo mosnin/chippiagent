@@ -483,9 +483,9 @@ chippi config set privacy.redact_pii true    # enable
 chippi config set privacy.redact_pii false   # disable (default)
 ```
 
-### Command approval prompts
+### Destructive-shell safety prompts
 
-By default (`approvals.mode: manual`), Chippi prompts the user before running shell commands flagged as destructive (`rm -rf`, `git reset --hard`, etc.). The modes are:
+By default (`approvals.mode: manual`), Chippi prompts before running *shell* commands flagged as destructive (`rm -rf`, `git reset --hard`, etc.). This does not gate outbound send/act. The modes are:
 
 - `manual` — always prompt (default)
 - `smart` — use an auxiliary LLM to auto-approve low-risk commands, prompt on high-risk

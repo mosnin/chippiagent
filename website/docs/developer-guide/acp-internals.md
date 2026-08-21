@@ -1,7 +1,7 @@
 ---
 sidebar_position: 2
 title: "ACP Internals"
-description: "How the ACP adapter works: lifecycle, sessions, event bridge, approvals, and tool rendering"
+description: "How the ACP adapter works: lifecycle, sessions, event bridge, permission callbacks, and tool rendering"
 ---
 
 # ACP Internals
@@ -90,7 +90,7 @@ asyncio.run_coroutine_threadsafe(...)
 
 ### Permission bridge
 
-`acp_adapter/permissions.py` adapts dangerous terminal approval prompts into ACP permission requests.
+`acp_adapter/permissions.py` adapts dangerous-shell safety prompts into ACP permission requests. This is a terminal floor, not a send or review queue.
 
 Mapping:
 
@@ -166,9 +166,9 @@ The event bridge tracks tool IDs FIFO per tool name, not just one ID per name. T
 
 Without FIFO queues, completion events would attach to the wrong tool invocation.
 
-## Approval callback restoration
+## Shell-safety callback restoration
 
-ACP temporarily installs an approval callback on the terminal tool during prompt execution, then restores the previous callback afterward. This avoids leaving ACP session-specific approval handlers installed globally forever.
+ACP temporarily installs a shell-safety callback on the terminal tool during prompt execution, then restores the previous callback afterward. This avoids leaving ACP session-specific handlers installed globally forever.
 
 ## Current limitations
 

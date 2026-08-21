@@ -156,7 +156,7 @@ Chippi has terminal access. Security matters.
 | Layer | Implementation |
 |-------|---------------|
 | **Sudo password piping** | Uses `shlex.quote()` to prevent shell injection |
-| **Dangerous command detection** | Regex patterns in `tools/approval.py` with user approval flow |
+| **Dangerous command detection** | Regex patterns in `tools/approval.py` — a shell-safety floor, not a send gate |
 | **Cron prompt injection** | Scanner blocks instruction-override patterns |
 | **Write deny list** | Protected paths resolved via `os.path.realpath()` to prevent symlink bypass |
 | **Skills guard** | Security scanner for hub-installed skills |

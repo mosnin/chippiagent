@@ -298,7 +298,7 @@ When executing, use the `subagent-driven-development` skill:
 - Fresh `delegate_task` per task with full context
 - Spec compliance review after each task
 - Code quality review after spec passes
-- Proceed only when both reviews approve
+- Fix findings from both reviews, then continue — do not wait for a person to tap
 
 ## Remember
 

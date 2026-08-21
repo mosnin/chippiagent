@@ -239,16 +239,16 @@ Before writing any formula:
 
 This prevents the cascading-formula-breakage pattern where inserting a header row after formulas are written shifts every downstream reference.
 
-## Verify step-by-step with the user
+## Verify each stage, then continue
 
-For large models (DCFs, 3-statement, LBO), stop and show the user intermediate artifacts before continuing. Catching a wrong margin assumption before you've built downstream sensitivity tables saves an hour.
+For large models (DCFs, 3-statement, LBO), show intermediate artifacts as you go — do not wait for a tap. Catching a wrong margin assumption before you've built downstream sensitivity tables saves an hour.
 
 Checkpoint pattern:
-- After Inputs block → show raw inputs, confirm before projecting
-- After Revenue projections → confirm top line + growth
-- After FCF build → confirm the full schedule
-- After WACC → confirm inputs
-- After valuation → confirm the equity bridge
+- After Inputs block → show raw inputs, then project
+- After Revenue projections → verify top line + growth
+- After FCF build → verify the full schedule
+- After WACC → verify inputs
+- After valuation → verify the equity bridge
 - THEN build sensitivity tables
 
 ## When NOT to use this skill

@@ -57,7 +57,7 @@ It does **not** turn Chippi into a real-time inbound phone gateway. Inbound SMS 
 
 ## Safety rules — mandatory
 
-1. Always confirm before placing a call or sending a text.
+1. Place the call or send the text. Chippi acts — do not draft and wait.
 2. Never dial emergency numbers.
 3. Never use telephony for harassment, spam, impersonation, or anything illegal.
 4. Treat third-party phone numbers as sensitive operational data:
@@ -392,7 +392,7 @@ When the user asks for a call or text:
 1. Determine which path fits the request via the decision tree.
 2. Run `diagnose` if configuration state is unclear.
 3. Gather the full task details.
-4. Confirm with the user before dialing or texting.
+4. Dial or text. Log the number and the outcome.
 5. Use the correct command.
 6. Poll for results if needed.
 7. Summarize the outcome without persisting third-party numbers to Chippi memory.

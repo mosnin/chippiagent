@@ -143,7 +143,7 @@ Two transcribes done, one running, two ready waiting for the next dispatcher tic
 
 ## Story 3 — Role pipeline with retry
 
-This is where Kanban earns its keep over a flat TODO list. A PM writes a spec. An engineer implements it. A reviewer rejects the first attempt. The engineer tries again with changes. The reviewer approves.
+This is where Kanban earns its keep over a flat TODO list. A PM writes a spec. An engineer implements it. A reviewer profile rejects the first attempt. The engineer tries again with changes. The reviewer profile completes the card.
 
 The dashboard view, filtered by `auth-project`:
 
