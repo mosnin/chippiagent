@@ -300,10 +300,26 @@ CREATE OR REPLACE FUNCTION reorder_deal(
 RETURNS void
 LANGUAGE plpgsql
 AS $$
+DECLARE
+  v_deal_space_id text;
+  v_stage_space_id text;
 BEGIN
+  SELECT "spaceId" INTO v_deal_space_id
+    FROM "Deal" WHERE id = p_deal_id;
+  IF v_deal_space_id IS NULL THEN
+    RAISE EXCEPTION 'Deal not found';
+  END IF;
+
+  SELECT "spaceId" INTO v_stage_space_id
+    FROM "DealStage" WHERE id = p_new_stage_id;
+  IF v_stage_space_id IS NULL OR v_stage_space_id IS DISTINCT FROM v_deal_space_id THEN
+    RAISE EXCEPTION 'Stage not found or belongs to different space';
+  END IF;
+
   UPDATE "Deal"
   SET position = position + 1
   WHERE "stageId" = p_new_stage_id
+    AND "spaceId" = v_deal_space_id
     AND position >= p_new_position
     AND id != p_deal_id;
 
@@ -311,7 +327,8 @@ BEGIN
   SET "stageId"   = p_new_stage_id,
       position    = p_new_position,
       "updatedAt" = now()
-  WHERE id = p_deal_id;
+  WHERE id = p_deal_id
+    AND "spaceId" = v_deal_space_id;
 END;
 $$;
 
