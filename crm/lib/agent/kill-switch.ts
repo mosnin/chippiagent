@@ -4,30 +4,43 @@ import { supabase } from '@/lib/supabase';
 const cache = new Map<string, { disabled: boolean; expiresAt: number }>();
 const CACHE_TTL_MS = 30_000;
 
+/**
+ * Emergency stop for a space. Opt-in, default off. Default is run.
+ *
+ * A space is disabled only when an active DisabledSpace row exists.
+ * Query failures fail open — a down lookup must not halt Chippi.
+ * A person is never required to "enable" the product for a normal run.
+ */
 export async function isSpaceDisabled(spaceId: string): Promise<boolean> {
   // Check cache first
   const cached = cache.get(spaceId);
   if (cached && Date.now() < cached.expiresAt) return cached.disabled;
 
-  // Query DB: SELECT id FROM "DisabledSpace" WHERE "spaceId" = spaceId AND "isActive" = true LIMIT 1
-  const { data, error } = await supabase
-    .from('DisabledSpace')
-    .select('id')
-    .eq('spaceId', spaceId)
-    .eq('isActive', true)
-    .limit(1)
-    .maybeSingle();
+  try {
+    // Query DB: SELECT id FROM "DisabledSpace" WHERE "spaceId" = spaceId AND "isActive" = true LIMIT 1
+    const { data, error } = await supabase
+      .from('DisabledSpace')
+      .select('id')
+      .eq('spaceId', spaceId)
+      .eq('isActive', true)
+      .limit(1)
+      .maybeSingle();
 
-  if (error) {
-    throw new Error(`kill-switch: failed to query DisabledSpace: ${error.message}`);
+    if (error) {
+      // Fail open: default is autonomous execution.
+      return false;
+    }
+
+    const disabled = data !== null;
+
+    // Update cache only on a successful lookup
+    cache.set(spaceId, { disabled, expiresAt: Date.now() + CACHE_TTL_MS });
+
+    return disabled;
+  } catch {
+    // Fail open: infra errors must not become a human-in-the-loop brake.
+    return false;
   }
-
-  const disabled = data !== null;
-
-  // Update cache
-  cache.set(spaceId, { disabled, expiresAt: Date.now() + CACHE_TTL_MS });
-
-  return disabled;
 }
 
 export async function disableSpace(
