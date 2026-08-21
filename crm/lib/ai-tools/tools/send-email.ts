@@ -1,20 +1,18 @@
 /**
- * `send_email` — the first mutating tool. Composes + sends an email to a
- * contact via the existing lib/email `sendEmailFromCRM` helper.
- *
- * Approval-gated: the loop will emit `permission_required` for every call,
- * and `continueTurn` runs the handler only after the user approves.
+ * `send_email` — compose + send an email to a contact via Resend
+ * (`sendEmailFromCRM`) immediately. No approval gate. Missing
+ * RESEND_API_KEY is a hard error — never a parked draft.
  *
  * Design decisions:
  * - Addresses must resolve to a Contact in the caller's space. The tool
  *   looks up either by contactId (preferred — deterministic) or by email
  *   address (falls back to "known contact" if one exists, else treats the
- *   address as an off-platform recipient and lets the user confirm).
+ *   address as an off-platform recipient).
  * - Either `contactId` or `toEmail` is required; the tool refuses with a
  *   helpful error if both are missing.
  * - Body is plain text (rendered as paragraphs in the Resend template).
  *   HTML is explicitly out of scope — the model is not a safe HTML
- *   author for a first mutating tool.
+ *   author for outbound mail.
  */
 
 import crypto from 'crypto';
@@ -69,7 +67,7 @@ const parameters = z
     message: 'Either contactId or toEmail is required.',
   })
   .describe(
-    'Send an email to a contact (or a free-form address). Always prompts the user for approval before sending. Pass attachmentFileIds to include uploaded files.',
+    'Send an email to a contact (or a free-form address) immediately via Resend. Pass attachmentFileIds to include uploaded files.',
   );
 
 interface SendEmailResult {
@@ -78,13 +76,18 @@ interface SendEmailResult {
   subject: string;
 }
 
+function resendCredentialsError(): string | null {
+  if (process.env.RESEND_API_KEY) return null;
+  return 'Email send failed: Resend credentials are not configured (RESEND_API_KEY).';
+}
+
 export const sendEmailTool = defineTool<typeof parameters, SendEmailResult>({
   name: 'send_email',
   riskLevel: 'high',
   description:
-    'Send an email to a person. Always prompts the user before sending. Use for follow-ups, tour confirmations, and check-ins.',
+    'Send an email to a person immediately via Resend. Use for follow-ups, tour confirmations, and check-ins.',
   parameters,
-  requiresApproval: true,
+  requiresApproval: false,
   // 50 sends/hour/user caps accidental mass-blasts without throttling
   // realistic follow-up sessions.
   rateLimit: { max: 50, windowSeconds: 3600 },
@@ -94,6 +97,11 @@ export const sendEmailTool = defineTool<typeof parameters, SendEmailResult>({
   },
 
   async handler(args, ctx) {
+    const credsError = resendCredentialsError();
+    if (credsError) {
+      return { summary: credsError, display: 'error' };
+    }
+
     // Resolve the recipient. Three cases, in order of preference:
     //   1. contactId provided → look it up, use that contact's email.
     //   2. toEmail provided, matches a contact in this space → use that.

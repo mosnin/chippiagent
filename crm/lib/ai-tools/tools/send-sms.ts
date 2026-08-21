@@ -1,10 +1,11 @@
 /**
- * `send_sms` — send an SMS to a contact via Telnyx.
+ * `send_sms` — send an SMS to a contact via Telnyx immediately.
  *
- * Approval-gated. SMS is more intrusive than email (it dings the lead's
- * phone), so the user ALWAYS sees the body + recipient before we send.
+ * No approval gate. The handler calls the real Telnyx provider and
+ * returns sent or a hard error. Missing TELNYX_API_KEY / TELNYX_FROM_NUMBER
+ * is a hard error — never a parked draft.
  *
- * Recipient resolution mirrors send_email:
+ * Recipient resolution:
  *   1. contactId provided → use that contact's `phone`.
  *   2. toPhone provided   → send to the bare number (optionally matched
  *      back to a Contact for the audit trail).
@@ -59,7 +60,7 @@ const parameters = z
   .refine((v) => v.contactId || v.toPhone, {
     message: 'Either contactId or toPhone is required.',
   })
-  .describe('Send an SMS / MMS to a contact or raw phone number. Prompts for approval first.');
+  .describe('Send an SMS / MMS to a contact or raw phone number immediately via Telnyx.');
 
 interface SendSMSResult {
   deliveredTo: string;
@@ -67,13 +68,21 @@ interface SendSMSResult {
   bodyLength: number;
 }
 
+function telnyxCredentialsError(): string | null {
+  const missing: string[] = [];
+  if (!process.env.TELNYX_API_KEY) missing.push('TELNYX_API_KEY');
+  if (!process.env.TELNYX_FROM_NUMBER) missing.push('TELNYX_FROM_NUMBER');
+  if (missing.length === 0) return null;
+  return `SMS send failed: Telnyx credentials are not configured (${missing.join(', ')}).`;
+}
+
 export const sendSmsTool = defineTool<typeof parameters, SendSMSResult>({
   name: 'send_sms',
   riskLevel: 'high',
   description:
-    'Send an SMS to a person (or free-form phone number). Always prompts for approval. Use for tour confirmations, quick check-ins.',
+    'Send an SMS to a person (or free-form phone number) immediately via Telnyx. Use for tour confirmations, quick check-ins.',
   parameters,
-  requiresApproval: true,
+  requiresApproval: false,
   // SMS is billed per-segment; 30/hour keeps bills sane without blocking
   // realistic follow-up workflows.
   rateLimit: { max: 30, windowSeconds: 3600 },
@@ -84,6 +93,11 @@ export const sendSmsTool = defineTool<typeof parameters, SendSMSResult>({
   },
 
   async handler(args, ctx) {
+    const credsError = telnyxCredentialsError();
+    if (credsError) {
+      return { summary: credsError, display: 'error' };
+    }
+
     let resolvedPhone: string | null = null;
     let resolvedContactId: string | null = null;
 
@@ -171,17 +185,15 @@ export const sendSmsTool = defineTool<typeof parameters, SendSMSResult>({
       mediaUrls = found.map((r) => getPublicUrl(r.storageKey));
     }
 
-    // sendSMS returns false on any failure (credentials missing, invalid
-    // number, premium prefix, provider error). Distinguish between "we
-    // didn't send" vs "provider accepted but silently dropped" isn't
-    // possible here — treat false as a delivery failure.
+    // sendSMS returns false on any failure (invalid number, premium
+    // prefix, provider error). Credentials were already required above.
     const idemKey = makeIdempotencyKey('send_sms', ctx.space.id, resolvedPhone, args.body);
     const ok = await withIdempotency(idemKey, () =>
       sendSMS({ to: resolvedPhone!, body: args.body, mediaUrls }),
     );
     if (!ok) {
       return {
-        summary: `SMS send failed for ${resolvedPhone}. Check the number, Telnyx credentials, or provider logs.`,
+        summary: `SMS send failed for ${resolvedPhone}. Check the number or Telnyx provider logs.`,
         display: 'error',
       };
     }

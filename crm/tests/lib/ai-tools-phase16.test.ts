@@ -55,13 +55,23 @@ vi.mock('@/lib/supabase', () => {
   return { supabase: { from: vi.fn((table: string) => makeChain(table)) } };
 });
 
-// composeQuickDraft is the only external dependency for draft_email/draft_sms.
+// composeQuickDraft builds the copy; send_* deliver it via the real providers.
 const { composeQuickDraftMock } = vi.hoisted(() => ({
   composeQuickDraftMock: vi.fn(),
 }));
 vi.mock('@/app/api/agent/quick-draft/route', () => ({
   composeQuickDraft: composeQuickDraftMock,
 }));
+
+const { sendEmailFromCRMMock } = vi.hoisted(() => ({
+  sendEmailFromCRMMock: vi.fn(async () => undefined),
+}));
+vi.mock('@/lib/email', () => ({ sendEmailFromCRM: sendEmailFromCRMMock }));
+
+const { sendSMSMock } = vi.hoisted(() => ({
+  sendSMSMock: vi.fn(async () => true),
+}));
+vi.mock('@/lib/sms', () => ({ sendSMS: sendSMSMock }));
 
 // recall_history now goes through agent-memory's recallMemory (semantic).
 const { recallMemoryMock } = vi.hoisted(() => ({
@@ -99,6 +109,13 @@ beforeEach(() => {
   mockByTable = {};
   composeQuickDraftMock.mockReset();
   recallMemoryMock.mockReset();
+  sendEmailFromCRMMock.mockReset();
+  sendEmailFromCRMMock.mockResolvedValue(undefined);
+  sendSMSMock.mockReset();
+  sendSMSMock.mockResolvedValue(true);
+  process.env.RESEND_API_KEY = 're_test';
+  process.env.TELNYX_API_KEY = 'KEY_test';
+  process.env.TELNYX_FROM_NUMBER = '+14155550100';
 });
 
 // ── find_comparable_properties ─────────────────────────────────────────────
@@ -382,42 +399,103 @@ describe('assignLeadToRealtorTool', () => {
 
 // ── draft_email ────────────────────────────────────────────────────────────
 describe('draftEmailTool', () => {
-  it('is read-only and does NOT require approval', () => {
+  it('sends immediately without approval', () => {
     expect(draftEmailTool.requiresApproval).toBe(false);
   });
 
-  it('returns the composed subject + body, no AgentDraft side effect', async () => {
+  it('composes then sends via Resend — no AgentDraft, no parked draft', async () => {
     composeQuickDraftMock.mockResolvedValueOnce({
       subject: 'Quick check-in',
       body: 'Hey — circling back.',
       subjectLabel: 'Alex',
     });
+    mockByTable = {
+      Contact: { single: { id: 'c_1', email: 'alex@example.com', name: 'Alex' } },
+      SpaceSetting: { single: { businessName: 'Jane Realty' } },
+    };
     const result = await draftEmailTool.handler(
       { personId: 'c_1', intent: 'check-in' },
       makeCtx(),
     );
-    expect(result.display).toBe('plain');
-    const data = result.data as { subject: string; body: string };
-    expect(data.subject).toMatch(/check-in/);
-    expect(data.body).toMatch(/circling back/);
-    // composeQuickDraft does the work; no fake AgentDraft insert was needed.
     expect(composeQuickDraftMock).toHaveBeenCalledTimes(1);
+    expect(sendEmailFromCRMMock).toHaveBeenCalledTimes(1);
+    expect((sendEmailFromCRMMock.mock.calls as unknown[][])[0][0]).toMatchObject({
+      toEmail: 'alex@example.com',
+      subject: 'Quick check-in',
+      body: 'Hey — circling back.',
+    });
+    expect(result.display).toBe('success');
+    expect(result.summary).toMatch(/sent/);
+    expect(result.summary).not.toMatch(/pending draft|park/i);
+    expect((result.data as { deliveredTo: string }).deliveredTo).toBe('alex@example.com');
+  });
+
+  it('hard-errors when Resend credentials are missing', async () => {
+    composeQuickDraftMock.mockResolvedValueOnce({
+      subject: 'Quick check-in',
+      body: 'Hey — circling back.',
+    });
+    delete process.env.RESEND_API_KEY;
+    const result = await draftEmailTool.handler(
+      { personId: 'c_1', intent: 'check-in' },
+      makeCtx(),
+    );
+    expect(sendEmailFromCRMMock).not.toHaveBeenCalled();
+    expect(result.display).toBe('error');
+    expect(result.summary).toMatch(/RESEND_API_KEY/);
+    expect(result.summary).not.toMatch(/pending draft|park/i);
   });
 });
 
 // ── draft_sms ──────────────────────────────────────────────────────────────
 describe('draftSmsTool', () => {
-  it('is read-only', () => {
+  it('sends immediately without approval', () => {
     expect(draftSmsTool.requiresApproval).toBe(false);
   });
 
-  it('returns body only and reports an error when compose fails', async () => {
+  it('composes then sends via Telnyx', async () => {
+    composeQuickDraftMock.mockResolvedValueOnce({
+      body: 'Hey — still on for Friday?',
+    });
+    mockByTable = {
+      Contact: { single: { id: 'c_1', name: 'Alex', phone: '+14155550123' } },
+    };
+    const result = await draftSmsTool.handler(
+      { personId: 'c_1', intent: 'check-in' },
+      makeCtx(),
+    );
+    expect(sendSMSMock).toHaveBeenCalledTimes(1);
+    expect((sendSMSMock.mock.calls as unknown[][])[0][0]).toMatchObject({
+      to: '+14155550123',
+      body: 'Hey — still on for Friday?',
+    });
+    expect(result.display).toBe('success');
+    expect(result.summary).toMatch(/sent/);
+    expect(result.summary).not.toMatch(/pending draft|park/i);
+  });
+
+  it('reports an error when compose fails and does not send', async () => {
     composeQuickDraftMock.mockResolvedValueOnce(null);
     const result = await draftSmsTool.handler(
       { personId: 'c_1', intent: 'check-in' },
       makeCtx(),
     );
     expect(result.display).toBe('error');
+    expect(sendSMSMock).not.toHaveBeenCalled();
+  });
+
+  it('hard-errors when Telnyx credentials are missing', async () => {
+    composeQuickDraftMock.mockResolvedValueOnce({ body: 'Hi' });
+    delete process.env.TELNYX_API_KEY;
+    delete process.env.TELNYX_FROM_NUMBER;
+    const result = await draftSmsTool.handler(
+      { personId: 'c_1', intent: 'check-in' },
+      makeCtx(),
+    );
+    expect(sendSMSMock).not.toHaveBeenCalled();
+    expect(result.display).toBe('error');
+    expect(result.summary).toMatch(/TELNYX_API_KEY/);
+    expect(result.summary).not.toMatch(/pending draft|park/i);
   });
 });
 
