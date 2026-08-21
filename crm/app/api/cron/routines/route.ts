@@ -86,13 +86,36 @@ export async function GET(req: NextRequest) {
   const skippedInactive = due.length - runnable.length;
 
   // ── 3. Fire with bounded concurrency ────────────────────────────────────
+  // One Modal run per space at a time. A second same-space dispatch loses
+  // Modal's run lock, still returns HTTP 200, and used to get lastRunAt
+  // stamped — skipping that instruction until the next cadence. Leave the
+  // extra rows unstamped so the next hourly tick picks them up.
   let fired = 0;
   let errored = 0;
+  let deferred = 0;
   let cursor = 0;
+  const claimedSpaces = new Set<string>();
 
   async function worker() {
     while (cursor < runnable.length) {
       const routine = runnable[cursor++];
+      if (claimedSpaces.has(routine.spaceId)) {
+        deferred++;
+        continue;
+      }
+      claimedSpaces.add(routine.spaceId);
+
+      if (await spaceIsRunning(routine.spaceId)) {
+        claimedSpaces.delete(routine.spaceId);
+        deferred++;
+        continue;
+      }
+      if (!(await claimDispatch(routine.spaceId))) {
+        claimedSpaces.delete(routine.spaceId);
+        deferred++;
+        continue;
+      }
+
       let status: 'ok' | 'error';
       try {
         status = await fireRoutineRun(routine.spaceId, routine.instruction);
@@ -105,6 +128,7 @@ export async function GET(req: NextRequest) {
 
       // Stamping lastRunAt fires the trigger that advances nextRunAt — even
       // on 'error', so a permanently failing dispatch can't jam the queue.
+      // Only stamp rows we actually dispatched. Deferred rows stay due.
       await supabase
         .from('Routine')
         .update({ lastRunAt: new Date().toISOString(), lastRunStatus: status })
@@ -121,8 +145,47 @@ export async function GET(req: NextRequest) {
     fired,
     errored,
     skipped: skippedInactive,
+    deferred,
     durationMs: Date.now() - startedAt,
   };
   console.log('[cron/routines] Tick complete', summary);
   return NextResponse.json(summary);
+}
+
+// Modal holds agent:runlock:{spaceId} for the whole run. If it's set, a
+// dispatch would no-op then get stamped 'ok' — a skipped send. Defer instead.
+const DISPATCH_LOCK_TTL_S = 660;
+
+async function spaceIsRunning(spaceId: string): Promise<boolean> {
+  const kvUrl = process.env.KV_REST_API_URL;
+  const kvToken = process.env.KV_REST_API_TOKEN;
+  if (!kvUrl || !kvToken) return false;
+  try {
+    const res = await fetch(
+      `${kvUrl}/get/${encodeURIComponent(`agent:runlock:${spaceId}`)}`,
+      { headers: { Authorization: `Bearer ${kvToken}` } },
+    );
+    if (!res.ok) return false;
+    const { result } = (await res.json()) as { result: string | null };
+    return Boolean(result);
+  } catch {
+    return false;
+  }
+}
+
+async function claimDispatch(spaceId: string): Promise<boolean> {
+  const kvUrl = process.env.KV_REST_API_URL;
+  const kvToken = process.env.KV_REST_API_TOKEN;
+  if (!kvUrl || !kvToken) return true;
+  try {
+    const res = await fetch(
+      `${kvUrl}/set/${encodeURIComponent(`agent:dispatch:${spaceId}`)}/1/EX/${DISPATCH_LOCK_TTL_S}/NX`,
+      { method: 'POST', headers: { Authorization: `Bearer ${kvToken}` } },
+    );
+    if (!res.ok) return true;
+    const { result } = (await res.json()) as { result: string | null };
+    return result !== null;
+  } catch {
+    return true;
+  }
 }

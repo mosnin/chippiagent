@@ -8,6 +8,8 @@
  *
  * One Inngest step per platform: on a retry, a platform that already posted
  * is memoized and never posts twice — only a genuinely failed step re-runs.
+ * The claim step is a compare-and-swap on status='scheduled' so a duplicate
+ * event cannot publish the same post twice.
  */
 
 import { inngest } from './client';
@@ -81,14 +83,21 @@ export const publishScheduledPost = inngest.createFunction(
       return { failed: 'missing image' };
     }
 
-    // Claim it so a duplicate event can't double-publish.
-    await step.run('claim', async () => {
-      await supabase
+    // Claim only from 'scheduled'. An unconditional update lets two
+    // deliveries both publish. Zero rows claimed → another run won.
+    const claimed = await step.run('claim', async () => {
+      const { data } = await supabase
         .from('StudioPost')
         .update({ status: 'publishing', updatedAt: new Date().toISOString() })
-        .eq('id', postId);
-      return { done: true };
+        .eq('id', postId)
+        .eq('status', 'scheduled')
+        .select('id')
+        .maybeSingle();
+      return { claimed: Boolean(data) };
     });
+    if (!claimed.claimed) {
+      return { skipped: 'not scheduled' };
+    }
 
     const imageUrl = await step.run('sign-image', () =>
       getSignedDownloadUrl(post.storageKey as string, 3600),

@@ -3,6 +3,10 @@ import { supabase } from '@/lib/supabase';
 import { sendFollowUpDigest } from '@/lib/email';
 import { sendSMS, followUpReminderSMS } from '@/lib/sms';
 
+// Vercel Cron can invoke the same job twice. Claim the space-day before
+// any email/SMS so a retry cannot double-text the realtor.
+const FOLLOWUP_CLAIM_TTL_S = 26 * 60 * 60;
+
 export async function GET(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret) {
@@ -37,6 +41,7 @@ export async function GET(req: NextRequest) {
   }
 
   let sent = 0;
+  let skippedDuplicate = 0;
   for (const [spaceId, spaceContacts] of Object.entries(bySpace)) {
     const { data: space } = await supabase
       .from('Space')
@@ -58,12 +63,21 @@ export async function GET(req: NextRequest) {
       .from('User')
       .select('email')
       .eq('id', space.ownerId)
-      .single();
-    if (!user?.email) continue;
+      .maybeSingle();
+
+    // Email and SMS are independent. A missing owner email must not skip SMS.
+    const emailOn = setting?.notifications !== false && Boolean(user?.email);
+    const smsOn = setting?.smsNotifications === true && Boolean(setting?.phoneNumber);
+    if (!emailOn && !smsOn) continue;
+
+    // Claim before send. A lost claim means this space-day already fired.
+    if (!(await claimFollowUpSpace(spaceId, now))) {
+      skippedDuplicate += 1;
+      continue;
+    }
 
     try {
-      // Email digest
-      if (setting?.notifications !== false) {
+      if (emailOn && user?.email) {
         await sendFollowUpDigest({
           toEmail: user.email,
           spaceName: space.name,
@@ -76,14 +90,13 @@ export async function GET(req: NextRequest) {
         });
       }
 
-      // SMS reminders (one per contact)
-      if (setting?.smsNotifications && setting?.phoneNumber) {
+      if (smsOn && setting?.phoneNumber) {
         const smsPromises = spaceContacts.map((c) =>
           sendSMS(
             followUpReminderSMS({
               spaceName: space.name,
               contactName: c.name,
-              phone: setting.phoneNumber!,
+              phone: setting.phoneNumber,
             })
           ).catch((err) => console.error('[cron] SMS follow-up failed', err))
         );
@@ -96,5 +109,28 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ sent });
+  return NextResponse.json({ sent, skippedDuplicate });
+}
+
+/**
+ * SET NX the space-day so two overlapping cron invocations cannot both send.
+ * Fail open when KV is missing — the 24h followUpAt window is the fallback.
+ */
+async function claimFollowUpSpace(spaceId: string, now: Date): Promise<boolean> {
+  const kvUrl = process.env.KV_REST_API_URL;
+  const kvToken = process.env.KV_REST_API_TOKEN;
+  if (!kvUrl || !kvToken) return true;
+  const day = now.toISOString().slice(0, 10);
+  const key = `cron:followup:${spaceId}:${day}`;
+  try {
+    const res = await fetch(
+      `${kvUrl}/set/${encodeURIComponent(key)}/1/EX/${FOLLOWUP_CLAIM_TTL_S}/NX`,
+      { method: 'POST', headers: { Authorization: `Bearer ${kvToken}` } },
+    );
+    if (!res.ok) return true;
+    const { result } = (await res.json()) as { result: string | null };
+    return result !== null;
+  } catch {
+    return true;
+  }
 }

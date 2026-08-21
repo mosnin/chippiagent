@@ -182,6 +182,7 @@ export async function GET(req: NextRequest) {
 
         // ── Send email ──
         if (process.env.RESEND_API_KEY) {
+          if (!(await claimWeeklyReport(brokerage.id, now))) continue;
           const { Resend } = await import('resend');
           const resend = new Resend(process.env.RESEND_API_KEY);
           const rawFrom = process.env.RESEND_FROM_EMAIL ?? 'notifications@alerts.usechippi.com';
@@ -226,6 +227,35 @@ export async function GET(req: NextRequest) {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+const WEEKLY_CLAIM_TTL_S = 8 * 24 * 60 * 60;
+
+function utcWeekKey(d: Date): string {
+  const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  const day = t.getUTCDay() || 7;
+  t.setUTCDate(t.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
+  const week = Math.ceil(((t.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+  return `${t.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
+}
+
+async function claimWeeklyReport(brokerageId: string, now: Date): Promise<boolean> {
+  const kvUrl = process.env.KV_REST_API_URL;
+  const kvToken = process.env.KV_REST_API_TOKEN;
+  if (!kvUrl || !kvToken) return true;
+  const key = `cron:broker-weekly:${brokerageId}:${utcWeekKey(now)}`;
+  try {
+    const res = await fetch(
+      `${kvUrl}/set/${encodeURIComponent(key)}/1/EX/${WEEKLY_CLAIM_TTL_S}/NX`,
+      { method: 'POST', headers: { Authorization: `Bearer ${kvToken}` } },
+    );
+    if (!res.ok) return true;
+    const { result } = (await res.json()) as { result: string | null };
+    return result !== null;
+  } catch {
+    return true;
+  }
+}
 
 function esc(value: string | null | undefined): string {
   if (!value) return '';
