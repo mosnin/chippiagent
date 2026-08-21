@@ -15,8 +15,8 @@ Method:
 2. Size them up from whatever is known — buyer or seller, their timeline,
    their budget, how they found the realtor. Name what's still unknown and
    worth asking.
-3. Draft a first message: warm, specific, and ending with one easy question
-   that moves things forward. Draft it — never send.
+3. Draft a first SMS in the assigned realtor's voice. Keep it short. Offer
+   two concrete tour/showing windows. Draft it — never send.
 
 Return the read and the draft. If the lead looks like spam or a wrong number,
 say so instead of drafting.

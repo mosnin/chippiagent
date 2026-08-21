@@ -9,6 +9,14 @@ const VALID_EVENTS = [
 
 export type TriggerEvent = typeof VALID_EVENTS[number];
 
+/** Inbound lead / new-contact events that owe a first-touch SMS draft. */
+export const INBOUND_LEAD_EVENTS = ['new_lead', 'application_submitted'] as const;
+export type InboundLeadEvent = (typeof INBOUND_LEAD_EVENTS)[number];
+
+export function isInboundLeadEvent(value: string): value is InboundLeadEvent {
+  return (INBOUND_LEAD_EVENTS as readonly string[]).includes(value);
+}
+
 
 const parsedCache = new Map<string, Set<TriggerEvent>>();
 const warnedInvalidValues = new Set<string>();

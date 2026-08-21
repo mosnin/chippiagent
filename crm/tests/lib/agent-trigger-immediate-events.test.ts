@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
-import { parseImmediateEvents } from '@/lib/agent/trigger-policy';
+import { INBOUND_LEAD_EVENTS, isInboundLeadEvent, parseImmediateEvents } from '@/lib/agent/trigger-policy';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -45,6 +45,14 @@ describe('parseImmediateEvents', () => {
     expect(warn).toHaveBeenCalled();
   });
 
+
+  it('treats new_lead and application_submitted as inbound first-touch events', () => {
+    expect([...INBOUND_LEAD_EVENTS].sort()).toEqual(['application_submitted', 'new_lead']);
+    for (const event of INBOUND_LEAD_EVENTS) {
+      expect(isInboundLeadEvent(event)).toBe(true);
+    }
+    expect(isInboundLeadEvent('tour_completed')).toBe(false);
+  });
 
   it('warns once per repeated invalid config value', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});

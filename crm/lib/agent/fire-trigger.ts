@@ -6,13 +6,16 @@
  * can fire a trigger without going through the public REST endpoint and its
  * Clerk auth. The route now does auth + delegates here.
  *
- * Behaviour mirrors the route exactly:
- *   1. Rate-limit per space-per-minute (capped at RATE_LIMIT).
- *   2. Dedupe within DEDUPE_WINDOW_S using the bucket pattern.
- *   3. RPUSH the trigger to `agent:triggers:{spaceId}` (FIFO queue).
- *   4. If event is in AGENT_IMMEDIATE_EVENTS and MODAL_WEBHOOK_URL is set,
+ * Behaviour:
+ *   1. For inbound-lead events (`new_lead`, `application_submitted`) with a
+ *      contactId, draft a pending first-touch SMS (never sent) before the
+ *      queue — the product cannot wait on Redis.
+ *   2. Rate-limit per space-per-minute (capped at RATE_LIMIT).
+ *   3. Dedupe within DEDUPE_WINDOW_S using the bucket pattern.
+ *   4. RPUSH the trigger to `agent:triggers:{spaceId}` (FIFO queue).
+ *   5. If event is in AGENT_IMMEDIATE_EVENTS and MODAL_WEBHOOK_URL is set,
  *      fire the Modal webhook immediately (fire-and-forget).
- *   5. Record the outcome to `agent:trigger:events:{spaceId}` for audit.
+ *   6. Record the outcome to `agent:trigger:events:{spaceId}` for audit.
  *
  * Never throws — returns `{queued:false, reason}` instead. Callers in
  * mutation routes should not let a trigger-queue failure fail the parent
@@ -20,10 +23,12 @@
  */
 
 import {
+  isInboundLeadEvent,
   isTriggerEvent,
   parseImmediateEvents,
   type TriggerEvent,
 } from '@/lib/agent/trigger-policy';
+import { draftFirstTouchForLead, type FirstTouchDraftResult } from '@/lib/agent/first-touch';
 
 const RATE_LIMIT = 20;
 const RATE_WINDOW_S = 60;
@@ -41,6 +46,7 @@ export interface FireTriggerResult {
   deduped?: boolean;
   firedImmediately?: boolean;
   reason?: string;
+  firstTouch?: FirstTouchDraftResult;
 }
 
 async function recordOutcome(
@@ -109,6 +115,19 @@ async function isDuplicate(
   return result === null;
 }
 
+async function maybeDraftFirstTouch(input: FireTriggerInput): Promise<FirstTouchDraftResult | undefined> {
+  if (!isInboundLeadEvent(input.event) || !input.contactId) return undefined;
+  try {
+    return await draftFirstTouchForLead({
+      spaceId: input.spaceId,
+      contactId: input.contactId,
+    });
+  } catch {
+    // The wake still matters. The autonomous run is the backstop.
+    return undefined;
+  }
+}
+
 export async function fireAgentTrigger(input: FireTriggerInput): Promise<FireTriggerResult> {
   if (!input.event || !isTriggerEvent(input.event)) {
     return { queued: false, reason: 'invalid_event' };
@@ -117,20 +136,24 @@ export async function fireAgentTrigger(input: FireTriggerInput): Promise<FireTri
     return { queued: false, reason: 'missing_space_id' };
   }
 
+  // First-touch is the product. Draft before the Redis wake so a lead still
+  // gets an approval-gated SMS when the queue is down.
+  const firstTouch = await maybeDraftFirstTouch(input);
+
   const kvUrl = process.env.KV_REST_API_URL;
   const kvToken = process.env.KV_REST_API_TOKEN;
   if (!kvUrl || !kvToken) {
-    return { queued: false, reason: 'redis_not_configured' };
+    return { queued: false, reason: 'redis_not_configured', firstTouch };
   }
 
   const allowed = await checkRateLimit(kvUrl, kvToken, input.spaceId);
   if (!allowed) {
-    return { queued: false, reason: 'rate_limited' };
+    return { queued: false, reason: 'rate_limited', firstTouch };
   }
 
   if (await isDuplicate(kvUrl, kvToken, input)) {
     await recordOutcome(kvUrl, kvToken, input, 'deduped');
-    return { queued: true, deduped: true };
+    return { queued: true, deduped: true, firstTouch };
   }
 
   const trigger = JSON.stringify({
@@ -148,7 +171,7 @@ export async function fireAgentTrigger(input: FireTriggerInput): Promise<FireTri
     body: JSON.stringify([trigger]),
   });
   if (!pushRes.ok) {
-    return { queued: false, reason: 'redis_push_failed' };
+    return { queued: false, reason: 'redis_push_failed', firstTouch };
   }
 
   const MODAL_WEBHOOK_URL = process.env.MODAL_WEBHOOK_URL ?? '';
@@ -169,5 +192,5 @@ export async function fireAgentTrigger(input: FireTriggerInput): Promise<FireTri
   }
 
   await recordOutcome(kvUrl, kvToken, input, firedImmediately ? 'queued_modal' : 'queued');
-  return { queued: true, firedImmediately };
+  return { queued: true, firedImmediately, firstTouch };
 }

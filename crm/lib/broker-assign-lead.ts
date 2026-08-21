@@ -1,6 +1,7 @@
 import { supabase } from '@/lib/supabase';
 import { getSpaceByOwnerId } from '@/lib/space';
 import { notifyNewLead } from '@/lib/notify';
+import { fireAgentTrigger } from '@/lib/agent/fire-trigger';
 
 export type AssignLeadResult =
   | { ok: true; newContactId: string; assignedToSpaceId: string }
@@ -168,6 +169,18 @@ export async function assignLeadToRealtor(params: {
     });
   } catch (e) {
     console.error('[assign-lead] notification failed:', { newContactId, e });
+  }
+
+  // The cloned contact is a new inbound lead in the assigned realtor's
+  // workspace — wake first-touch in that realtor's voice.
+  try {
+    await fireAgentTrigger({
+      spaceId: realtorSpace.id,
+      event: 'new_lead',
+      contactId: newContactId,
+    });
+  } catch (e) {
+    console.error('[assign-lead] agent trigger failed:', { newContactId, e });
   }
 
   return { ok: true, newContactId, assignedToSpaceId: realtorSpace.id };
