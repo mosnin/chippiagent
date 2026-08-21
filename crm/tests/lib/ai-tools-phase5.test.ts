@@ -10,7 +10,7 @@
  * every touch of the same table, which is fine for single-path tests.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 let mockByTable: Record<
   string,
@@ -80,6 +80,9 @@ function makeCtx(): ToolContext {
   };
 }
 
+const ORIGINAL_TELNYX_KEY = process.env.TELNYX_API_KEY;
+const ORIGINAL_TELNYX_FROM = process.env.TELNYX_FROM_NUMBER;
+
 beforeEach(() => {
   mockByTable = {};
   syncContactMock.mockClear();
@@ -87,6 +90,15 @@ beforeEach(() => {
   sendSMSMock.mockClear();
   sendSMSMock.mockResolvedValue(true);
   notifyNewDealMock.mockClear();
+  process.env.TELNYX_API_KEY = 'test-telnyx-key';
+  process.env.TELNYX_FROM_NUMBER = '+14155550100';
+});
+
+afterEach(() => {
+  if (ORIGINAL_TELNYX_KEY === undefined) delete process.env.TELNYX_API_KEY;
+  else process.env.TELNYX_API_KEY = ORIGINAL_TELNYX_KEY;
+  if (ORIGINAL_TELNYX_FROM === undefined) delete process.env.TELNYX_FROM_NUMBER;
+  else process.env.TELNYX_FROM_NUMBER = ORIGINAL_TELNYX_FROM;
 });
 
 // ── move_deal_stage ──────────────────────────────────────────────────────
@@ -258,6 +270,19 @@ describe('sendSmsTool', () => {
     );
     expect(result.display).toBe('error');
     expect(result.summary).toMatch(/SMS send failed/);
+  });
+
+  it('fails closed when Telnyx credentials are missing instead of claiming the SMS sent', async () => {
+    delete process.env.TELNYX_API_KEY;
+    delete process.env.TELNYX_FROM_NUMBER;
+    mockByTable = { Contact: { single: null } };
+    const result = await sendSmsTool.handler(
+      { toPhone: '+14155550000', body: 'hi' },
+      makeCtx(),
+    );
+    expect(sendSMSMock).not.toHaveBeenCalled();
+    expect(result.display).toBe('error');
+    expect(result.summary).toMatch(/TELNYX/);
   });
 });
 

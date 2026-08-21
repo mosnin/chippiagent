@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ── Mock supabase chain + email delivery + logger ──────────────────────────
 let mockByTable: Record<
@@ -48,9 +48,17 @@ function makeCtx(): ToolContext {
   };
 }
 
+const ORIGINAL_RESEND_KEY = process.env.RESEND_API_KEY;
+
 beforeEach(() => {
   mockByTable = {};
   sendEmailFromCRMMock.mockClear();
+  process.env.RESEND_API_KEY = 'test-resend-key';
+});
+
+afterEach(() => {
+  if (ORIGINAL_RESEND_KEY === undefined) delete process.env.RESEND_API_KEY;
+  else process.env.RESEND_API_KEY = ORIGINAL_RESEND_KEY;
 });
 
 describe('sendEmailTool schema', () => {
@@ -164,6 +172,21 @@ describe('sendEmailTool handler — toEmail path', () => {
 });
 
 describe('sendEmailTool handler — errors', () => {
+  it('fails closed when RESEND_API_KEY is missing instead of claiming the email sent', async () => {
+    delete process.env.RESEND_API_KEY;
+    mockByTable = {
+      Contact: { single: null },
+      SpaceSetting: { single: null },
+    };
+    const result = await sendEmailTool.handler(
+      { toEmail: 'a@b.com', subject: 'Hi', body: 'Hi.' },
+      makeCtx(),
+    );
+    expect(sendEmailFromCRMMock).not.toHaveBeenCalled();
+    expect(result.display).toBe('error');
+    expect(result.summary).toMatch(/RESEND_API_KEY/);
+  });
+
   it('surfaces a delivery failure without throwing', async () => {
     mockByTable = {
       Contact: { single: null },

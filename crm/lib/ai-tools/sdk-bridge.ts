@@ -19,9 +19,8 @@
  * What does NOT live here — yet:
  *   - The custom-loop's persistence/streaming/sub-agent wiring. Those
  *     stay on `loop.ts` until the cutover PR.
- *   - Rate limiting. We keep enforcement in our `executeTool` wrapper
- *     (the bridge's `execute` calls into our existing rate-limit gate
- *     so behavior is preserved across both code paths).
+ *   - Rate limiting + original zod parse. `execute` calls
+ *     `executeResolvedTool` so the chat path cannot skip those gates.
  *
  * Approval flow mapping:
  *   - our `requiresApproval: false`         → SDK `needsApproval: false`
@@ -37,6 +36,7 @@
 
 import { Agent, run, tool, RunState, type RunContext, type RunResult } from '@openai/agents';
 import { z } from 'zod';
+import { executeResolvedTool } from './execute';
 import type { ToolContext, ToolDefinition, ToolResult } from './types';
 
 const DEFAULT_MODEL = 'gpt-5-mini';
@@ -81,23 +81,25 @@ export function toSdkTool<TArgs, TData>(def: ToolDefinition<TArgs, TData>, ctx: 
     strict: true,
     needsApproval,
     async execute(input) {
-      try {
-        const result: ToolResult = await def.handler(input as never, ctx);
-        return serialiseResult(result);
-      } catch (err) {
-        // A tool handler threw instead of returning { display: 'error' }.
-        // Without this catch, the raw exception (or stack trace shape)
-        // would land in the model's context — and from there, in the
-        // realtor's chat. Reformat to the same `Error: ` prefix the
-        // success/error paths use so the model continues normally and
-        // can paraphrase to the realtor in Chippi voice.
-        //
-        // We log the original at warn — the actual stack stays in our
-        // server logs for debugging; only the friendly summary reaches
-        // the model.
-        const message = err instanceof Error ? err.message : String(err);
-        return `Error: ${def.name} failed — ${message}`;
+      // Route through executeResolvedTool — NOT def.handler. The SDK
+      // only validates the relaxed strict-mode schema, so without this
+      // the original zod constraints, per-tool rate limit, and
+      // display:'error' → ok:false mapping never run on the chat path.
+      const exec = await executeResolvedTool(
+        def as ToolDefinition<unknown, unknown>,
+        input,
+        ctx,
+      );
+      if (!exec.ok) {
+        // Thrown handlers have no ToolResult; keep the name prefix so
+        // the model can attribute the failure. Handler-returned errors
+        // already carry a specific summary.
+        if (exec.error?.code === 'handler_error' && !exec.result) {
+          return `Error: ${def.name} failed — ${exec.error.message}`;
+        }
+        return `Error: ${exec.error?.message ?? `${def.name} failed`}`;
       }
+      return serialiseResult(exec.result!);
     },
   });
 }

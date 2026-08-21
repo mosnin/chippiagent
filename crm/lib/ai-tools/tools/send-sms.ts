@@ -171,6 +171,21 @@ export const sendSmsTool = defineTool<typeof parameters, SendSMSResult>({
       mediaUrls = found.map((r) => getPublicUrl(r.storageKey));
     }
 
+    // sendSMS returns false (never throws) when Telnyx credentials are
+    // missing. Fail closed here so we don't even enter idempotency —
+    // a cached `false` would otherwise block a later retry after creds
+    // are restored.
+    if (!process.env.TELNYX_API_KEY || !process.env.TELNYX_FROM_NUMBER) {
+      logger.error('[tools.send_sms] delivery not configured', {
+        spaceId: ctx.space.id,
+        to: resolvedPhone,
+      });
+      return {
+        summary: 'SMS send failed: SMS delivery is not configured (TELNYX_API_KEY / TELNYX_FROM_NUMBER missing).',
+        display: 'error',
+      };
+    }
+
     // sendSMS returns false on any failure (credentials missing, invalid
     // number, premium prefix, provider error). Distinguish between "we
     // didn't send" vs "provider accepted but silently dropped" isn't

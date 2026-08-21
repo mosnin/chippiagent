@@ -214,6 +214,21 @@ export const sendEmailTool = defineTool<typeof parameters, SendEmailResult>({
       }
     }
 
+    // sendEmailFromCRM no-ops (returns void, never throws) when
+    // RESEND_API_KEY is missing. Claiming "Email sent" in that case is
+    // a swallowed failure — the realtor and the model both think the
+    // message went out.
+    if (!process.env.RESEND_API_KEY) {
+      logger.error('[tools.send_email] delivery not configured', {
+        spaceId: ctx.space.id,
+        to: resolvedEmail,
+      });
+      return {
+        summary: 'Send failed: email delivery is not configured (RESEND_API_KEY missing).',
+        display: 'error',
+      };
+    }
+
     const idemKey = makeIdempotencyKey('send_email', ctx.space.id, resolvedEmail, args.subject);
     try {
       await withIdempotency(idemKey, () =>
