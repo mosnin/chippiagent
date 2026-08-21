@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { requireSpaceOwner } from '@/lib/api-auth';
+import { postgrestIlikeOr } from '@/lib/search-ilike';
 
 export async function GET(req: NextRequest) {
   const slug = req.nextUrl.searchParams.get('slug');
@@ -14,12 +15,12 @@ export async function GET(req: NextRequest) {
     if (auth instanceof NextResponse) return auth;
     const { space } = auth;
 
-    // Escape PostgreSQL ILIKE special characters before wrapping in wildcards
-    const escaped = q.slice(0, 100).replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
-    // Strip characters that break PostgREST filter syntax (commas, parens, colons, dots as operators)
-    const sanitized = escaped.replace(/[,()\.:;'"]/g, '');
-    if (!sanitized.trim()) return NextResponse.json({ contacts: [], deals: [], tours: [] });
-    const term = `%${sanitized}%`;
+    const contactOr = postgrestIlikeOr(q, ['name', 'email', 'phone']);
+    const dealOr = postgrestIlikeOr(q, ['title', 'address']);
+    const tourOr = postgrestIlikeOr(q, ['guestName', 'guestEmail', 'propertyAddress']);
+    if (!contactOr || !dealOr || !tourOr) {
+      return NextResponse.json({ contacts: [], deals: [], tours: [] });
+    }
 
     // Run each query independently so one failure doesn't block the others
     const safeQuery = async <T>(label: string, promise: PromiseLike<T>): Promise<T | { data: null; error: unknown }> => {
@@ -30,21 +31,21 @@ export async function GET(req: NextRequest) {
       .from('Contact')
       .select('id, name, email, phone, type, leadScore, scoreLabel')
       .eq('spaceId', space.id)
-      .or(`name.ilike.${term},email.ilike.${term},phone.ilike.${term}`)
+      .or(contactOr)
       .limit(8));
 
     const dealsPromise = safeQuery('deals', supabase
       .from('Deal')
       .select('id, title, address, value, status, stageId')
       .eq('spaceId', space.id)
-      .or(`title.ilike.${term},address.ilike.${term}`)
+      .or(dealOr)
       .limit(8));
 
     const toursPromise = safeQuery('tours', supabase
       .from('Tour')
       .select('id, guestName, guestEmail, propertyAddress, startsAt, status')
       .eq('spaceId', space.id)
-      .or(`guestName.ilike.${term},guestEmail.ilike.${term},propertyAddress.ilike.${term}`)
+      .or(tourOr)
       .limit(8));
 
     const [contactsResult, dealsResult, toursResult] = await Promise.all([
@@ -75,6 +76,7 @@ export async function GET(req: NextRequest) {
       const { data: stages } = await supabase
         .from('DealStage')
         .select('id, name, color')
+        .eq('spaceId', space.id)
         .in('id', stageIds);
       for (const s of stages ?? []) {
         stageMap[s.id] = { name: s.name, color: s.color };

@@ -4,6 +4,7 @@ import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/
 import { z } from 'zod';
 import { supabase } from '@/lib/supabase';
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit';
+import { postgrestIlikeOr } from '@/lib/search-ilike';
 import crypto from 'crypto';
 import { jwtVerify } from 'jose';
 
@@ -87,6 +88,10 @@ function buildServer(spaceId: string): McpServer {
         .limit(limit ?? 50);
       if (type) q = q.eq('type', type);
       if (leadType) q = q.eq('leadType', leadType);
+      if (query) {
+        const orFilter = postgrestIlikeOr(query, ['name', 'email', 'phone']);
+        if (orFilter) q = q.or(orFilter);
+      }
       const { data, error } = await q;
       if (error)
         return { content: [{ type: 'text' as const, text: 'Query failed' }] };
