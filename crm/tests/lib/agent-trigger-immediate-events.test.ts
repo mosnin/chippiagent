@@ -1,5 +1,11 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
-import { INBOUND_LEAD_EVENTS, isInboundLeadEvent, parseImmediateEvents } from '@/lib/agent/trigger-policy';
+import {
+  INBOUND_LEAD_EVENTS,
+  INBOUND_MESSAGE_EVENT,
+  isInboundLeadEvent,
+  isInboundMessageEvent,
+  parseImmediateEvents,
+} from '@/lib/agent/trigger-policy';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -52,6 +58,13 @@ describe('parseImmediateEvents', () => {
       expect(isInboundLeadEvent(event)).toBe(true);
     }
     expect(isInboundLeadEvent('tour_completed')).toBe(false);
+    expect(isInboundLeadEvent('inbound_message')).toBe(false);
+  });
+
+  it('treats inbound_message as the first-touch-reply event', () => {
+    expect(INBOUND_MESSAGE_EVENT).toBe('inbound_message');
+    expect(isInboundMessageEvent('inbound_message')).toBe(true);
+    expect(isInboundMessageEvent('new_lead')).toBe(false);
   });
 
   it('warns once per repeated invalid config value', () => {

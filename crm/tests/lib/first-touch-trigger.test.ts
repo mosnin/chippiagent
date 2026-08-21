@@ -5,6 +5,9 @@ const draftFirstTouchForLead = vi.fn();
 vi.mock('@/lib/agent/first-touch', () => ({
   draftFirstTouchForLead: (...args: unknown[]) => draftFirstTouchForLead(...args),
 }));
+vi.mock('@/lib/agent/first-touch-reply', () => ({
+  draftFirstTouchReplyForLead: vi.fn(),
+}));
 
 import { fireAgentTrigger } from '@/lib/agent/fire-trigger';
 
@@ -71,6 +74,12 @@ describe('fireAgentTrigger first-touch', () => {
   it('does not draft on non-inbound events', async () => {
     vi.stubGlobal('fetch', kvFetch());
     await fireAgentTrigger({ spaceId: 's1', event: 'tour_completed', contactId: 'c1' });
+    expect(draftFirstTouchForLead).not.toHaveBeenCalled();
+  });
+
+  it('does not draft first-touch on inbound_message — that is the reply slice', async () => {
+    vi.stubGlobal('fetch', kvFetch());
+    await fireAgentTrigger({ spaceId: 's1', event: 'inbound_message', contactId: 'c1' });
     expect(draftFirstTouchForLead).not.toHaveBeenCalled();
   });
 

@@ -10,6 +10,9 @@
  *   1. For inbound-lead events (`new_lead`, `application_submitted`) with a
  *      contactId, draft a pending first-touch SMS (never sent) before the
  *      queue — the product cannot wait on Redis.
+ *   1b. For `inbound_message` SMS replies to that first-touch, draft the
+ *      next pending booking SMS (confirm their time or offer two windows).
+ *      Never sent.
  *   2. Rate-limit per space-per-minute (capped at RATE_LIMIT).
  *   3. Dedupe within DEDUPE_WINDOW_S using the bucket pattern.
  *   4. RPUSH the trigger to `agent:triggers:{spaceId}` (FIFO queue).
@@ -24,11 +27,16 @@
 
 import {
   isInboundLeadEvent,
+  isInboundMessageEvent,
   isTriggerEvent,
   parseImmediateEvents,
   type TriggerEvent,
 } from '@/lib/agent/trigger-policy';
 import { draftFirstTouchForLead, type FirstTouchDraftResult } from '@/lib/agent/first-touch';
+import {
+  draftFirstTouchReplyForLead,
+  type FirstTouchReplyDraftResult,
+} from '@/lib/agent/first-touch-reply';
 
 const RATE_LIMIT = 20;
 const RATE_WINDOW_S = 60;
@@ -39,6 +47,9 @@ export interface FireTriggerInput {
   event: TriggerEvent;
   contactId?: string;
   dealId?: string;
+  content?: string;
+  channel?: 'sms' | 'email';
+  sourceDraftId?: string;
 }
 
 export interface FireTriggerResult {
@@ -47,6 +58,7 @@ export interface FireTriggerResult {
   firedImmediately?: boolean;
   reason?: string;
   firstTouch?: FirstTouchDraftResult;
+  firstTouchReply?: FirstTouchReplyDraftResult;
 }
 
 async function recordOutcome(
@@ -128,6 +140,24 @@ async function maybeDraftFirstTouch(input: FireTriggerInput): Promise<FirstTouch
   }
 }
 
+async function maybeDraftFirstTouchReply(
+  input: FireTriggerInput,
+): Promise<FirstTouchReplyDraftResult | undefined> {
+  if (!isInboundMessageEvent(input.event) || !input.contactId) return undefined;
+  try {
+    return await draftFirstTouchReplyForLead({
+      spaceId: input.spaceId,
+      contactId: input.contactId,
+      replyText: input.content,
+      sourceDraftId: input.sourceDraftId,
+      channel: input.channel,
+    });
+  } catch {
+    // The wake still matters. The autonomous run is the backstop.
+    return undefined;
+  }
+}
+
 export async function fireAgentTrigger(input: FireTriggerInput): Promise<FireTriggerResult> {
   if (!input.event || !isTriggerEvent(input.event)) {
     return { queued: false, reason: 'invalid_event' };
@@ -136,24 +166,25 @@ export async function fireAgentTrigger(input: FireTriggerInput): Promise<FireTri
     return { queued: false, reason: 'missing_space_id' };
   }
 
-  // First-touch is the product. Draft before the Redis wake so a lead still
-  // gets an approval-gated SMS when the queue is down.
+  // First-touch / first-touch-reply are the product. Draft before the Redis
+  // wake so a lead still gets an approval-gated SMS when the queue is down.
   const firstTouch = await maybeDraftFirstTouch(input);
+  const firstTouchReply = await maybeDraftFirstTouchReply(input);
 
   const kvUrl = process.env.KV_REST_API_URL;
   const kvToken = process.env.KV_REST_API_TOKEN;
   if (!kvUrl || !kvToken) {
-    return { queued: false, reason: 'redis_not_configured', firstTouch };
+    return { queued: false, reason: 'redis_not_configured', firstTouch, firstTouchReply };
   }
 
   const allowed = await checkRateLimit(kvUrl, kvToken, input.spaceId);
   if (!allowed) {
-    return { queued: false, reason: 'rate_limited', firstTouch };
+    return { queued: false, reason: 'rate_limited', firstTouch, firstTouchReply };
   }
 
   if (await isDuplicate(kvUrl, kvToken, input)) {
     await recordOutcome(kvUrl, kvToken, input, 'deduped');
-    return { queued: true, deduped: true, firstTouch };
+    return { queued: true, deduped: true, firstTouch, firstTouchReply };
   }
 
   const trigger = JSON.stringify({
@@ -161,6 +192,9 @@ export async function fireAgentTrigger(input: FireTriggerInput): Promise<FireTri
     contactId: input.contactId ?? null,
     dealId: input.dealId ?? null,
     spaceId: input.spaceId,
+    content: input.content ?? null,
+    channel: input.channel ?? null,
+    sourceDraftId: input.sourceDraftId ?? null,
     queuedAt: new Date().toISOString(),
   });
   const key = `agent:triggers:${input.spaceId}`;
@@ -171,7 +205,7 @@ export async function fireAgentTrigger(input: FireTriggerInput): Promise<FireTri
     body: JSON.stringify([trigger]),
   });
   if (!pushRes.ok) {
-    return { queued: false, reason: 'redis_push_failed', firstTouch };
+    return { queued: false, reason: 'redis_push_failed', firstTouch, firstTouchReply };
   }
 
   const MODAL_WEBHOOK_URL = process.env.MODAL_WEBHOOK_URL ?? '';
@@ -192,5 +226,5 @@ export async function fireAgentTrigger(input: FireTriggerInput): Promise<FireTri
   }
 
   await recordOutcome(kvUrl, kvToken, input, firedImmediately ? 'queued_modal' : 'queued');
-  return { queued: true, firedImmediately, firstTouch };
+  return { queued: true, firedImmediately, firstTouch, firstTouchReply };
 }
