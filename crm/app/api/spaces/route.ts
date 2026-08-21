@@ -189,7 +189,27 @@ export async function PATCH(req: NextRequest) {
   const updateFields: Record<string, unknown> = {};
   if (name !== undefined) updateFields.name = name;
   if (emoji !== undefined) updateFields.emoji = emoji;
+  // Linkage must go through membership (onboarding after broker/create,
+  // invite accept, or join-code). A raw UUID here used to let any space
+  // owner attach themselves to an arbitrary brokerage.
   if (body.brokerageId && typeof body.brokerageId === 'string') {
+    const { data: dbUser } = await supabase
+      .from('User')
+      .select('id')
+      .eq('clerkId', userId)
+      .maybeSingle();
+    if (!dbUser) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    const { data: membership } = await supabase
+      .from('BrokerageMembership')
+      .select('id')
+      .eq('brokerageId', body.brokerageId)
+      .eq('userId', dbUser.id)
+      .maybeSingle();
+    if (!membership) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
     updateFields.brokerageId = body.brokerageId;
   }
 

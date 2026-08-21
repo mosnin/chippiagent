@@ -137,7 +137,10 @@ export async function POST(req: NextRequest) {
     const { assignedContactId, assignedSpaceId, assignedTo, assignedToName } = meta;
 
     // ── Validate the assigned contact's space belongs to a brokerage member ──
-    // Prevents corrupted/tampered metadata from deleting arbitrary contacts.
+    // Fail closed on the clone delete: missing/deleted space or a
+    // non-member owner used to fall through and delete by UUID only.
+    // Broker-side unassign still proceeds so the lead is not stuck.
+    let canDeleteClone = false;
     if (assignedSpaceId) {
       const { data: assignedSpace } = await supabase
         .from('Space')
@@ -153,13 +156,25 @@ export async function POST(req: NextRequest) {
           .eq('userId', assignedSpace.ownerId)
           .maybeSingle();
 
-        if (!assignedMembership) {
-          return NextResponse.json(
-            { error: 'Assigned contact does not belong to a member of this brokerage' },
-            { status: 403 },
-          );
+        if (assignedMembership) {
+          canDeleteClone = true;
+        } else {
+          console.warn('[unassign-lead] assigned space is not a brokerage member workspace', {
+            assignedContactId,
+            assignedSpaceId,
+            brokerageId: brokerage.id,
+          });
         }
+      } else {
+        console.warn('[unassign-lead] assigned space missing — skip clone delete', {
+          assignedContactId,
+          assignedSpaceId,
+        });
       }
+    } else {
+      console.warn('[unassign-lead] assignment metadata missing spaceId — skip clone delete', {
+        assignedContactId,
+      });
     }
 
     // ── Fetch the admin's name for audit logging ─────────────────────────
@@ -173,59 +188,69 @@ export async function POST(req: NextRequest) {
     const realtorName = assignedToName ?? assignedTo ?? 'Unknown';
 
     // ── Delete cloned contact from realtor's space ───────────────────────
-    // First, clean up related DealContact links and Deals
-    try {
-      // Find DealContact rows linked to the cloned contact
-      const { data: dealContactLinks } = await supabase
-        .from('DealContact')
-        .select('dealId, contactId')
-        .eq('contactId', assignedContactId);
+    // Only after space + membership validation. Every delete is scoped
+    // to assignedSpaceId so poisoned metadata cannot cross tenants.
+    if (canDeleteClone && assignedSpaceId) {
+      try {
+        const { data: cloned } = await supabase
+          .from('Contact')
+          .select('id')
+          .eq('id', assignedContactId)
+          .eq('spaceId', assignedSpaceId)
+          .maybeSingle();
 
-      if (dealContactLinks && dealContactLinks.length > 0) {
-        const dealIds = dealContactLinks.map(
-          (dc: { dealId: string }) => dc.dealId,
-        );
-
-        // Delete DealContact links first (FK constraint)
-        await supabase
-          .from('DealContact')
-          .delete()
-          .eq('contactId', assignedContactId);
-
-        // For each deal, check if it has other contacts. If not, delete the deal.
-        for (const dealId of dealIds) {
-          const { data: remainingLinks } = await supabase
+        if (cloned) {
+          const { data: dealContactLinks } = await supabase
             .from('DealContact')
-            .select('id')
-            .eq('dealId', dealId)
-            .limit(1);
+            .select('dealId, contactId')
+            .eq('contactId', assignedContactId);
 
-          if (!remainingLinks || remainingLinks.length === 0) {
-            await supabase.from('Deal').delete().eq('id', dealId);
+          if (dealContactLinks && dealContactLinks.length > 0) {
+            const dealIds = dealContactLinks.map(
+              (dc: { dealId: string }) => dc.dealId,
+            );
+
+            await supabase
+              .from('DealContact')
+              .delete()
+              .eq('contactId', assignedContactId);
+
+            for (const dealId of dealIds) {
+              const { data: remainingLinks } = await supabase
+                .from('DealContact')
+                .select('id')
+                .eq('dealId', dealId)
+                .limit(1);
+
+              if (!remainingLinks || remainingLinks.length === 0) {
+                await supabase
+                  .from('Deal')
+                  .delete()
+                  .eq('id', dealId)
+                  .eq('spaceId', assignedSpaceId);
+              }
+            }
+          }
+
+          const { error: deleteError } = await supabase
+            .from('Contact')
+            .delete()
+            .eq('id', assignedContactId)
+            .eq('spaceId', assignedSpaceId);
+
+          if (deleteError) {
+            console.warn('[unassign-lead] could not delete cloned contact (may already be deleted)', {
+              assignedContactId,
+              error: deleteError,
+            });
           }
         }
-      }
-
-      // Delete the cloned contact itself
-      const { error: deleteError } = await supabase
-        .from('Contact')
-        .delete()
-        .eq('id', assignedContactId);
-
-      // If the realtor already deleted the contact, that's fine — don't error
-      if (deleteError) {
-        console.warn('[unassign-lead] could not delete cloned contact (may already be deleted)', {
+      } catch (cleanupErr) {
+        console.warn('[unassign-lead] cleanup of realtor contact failed (may already be deleted)', {
           assignedContactId,
-          error: deleteError,
+          cleanupErr,
         });
       }
-    } catch (cleanupErr) {
-      // If the realtor already deleted their copy, we still proceed with
-      // cleaning up the broker side. Log but don't fail.
-      console.warn('[unassign-lead] cleanup of realtor contact failed (may already be deleted)', {
-        assignedContactId,
-        cleanupErr,
-      });
     }
 
     // ── Update broker contact: remove 'assigned', add 'unassigned' ───────

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
-import { requireAuth } from '@/lib/api-auth';
-import { getSpaceForUser, getSpaceFromSlug } from '@/lib/space';
+import { requireAuth, requireSpaceOwner } from '@/lib/api-auth';
+import { getSpaceForUser } from '@/lib/space';
+import type { Space } from '@/lib/types';
 
 /**
  * GET /api/cards/contact/[id]?slug=<workspace-slug>
@@ -9,25 +10,29 @@ import { getSpaceForUser, getSpaceFromSlug } from '@/lib/space';
  * Lightweight card payload for the inline expandable contact card in the
  * Chippi chat. Returns only what the card renders — no dead weight.
  *
- * Auth: Clerk session. Space resolved via slug query param (from URL) or
- * via the authenticated user's own space when slug is absent.
+ * Auth: Clerk session. When slug is present the caller must own that
+ * workspace (or be a broker_owner/broker_admin of its brokerage). A
+ * slug alone is not enough — that was a cross-tenant read.
  */
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const authResult = await requireAuth();
-  if (authResult instanceof NextResponse) return authResult;
-  const { userId } = authResult;
-
   const { id } = await params;
   const slug = req.nextUrl.searchParams.get('slug');
 
-  const space = slug
-    ? await getSpaceFromSlug(slug)
-    : await getSpaceForUser(userId);
-
-  if (!space) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  let space: Space;
+  if (slug) {
+    const owner = await requireSpaceOwner(slug);
+    if (owner instanceof NextResponse) return owner;
+    space = owner.space;
+  } else {
+    const authResult = await requireAuth();
+    if (authResult instanceof NextResponse) return authResult;
+    const resolved = await getSpaceForUser(authResult.userId);
+    if (!resolved) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    space = resolved;
+  }
 
   const { data: contact, error: contactError } = await supabase
     .from('Contact')
