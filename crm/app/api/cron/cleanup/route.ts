@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
 
   if (error) {
     logger.error('[cron.cleanup] cleanup_agent_data RPC failed', { err: error.message });
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: 'Cleanup failed' }, { status: 500 });
   }
 
   logger.info('[cron.cleanup] cleanup complete', { result: data });

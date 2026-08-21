@@ -3,7 +3,8 @@
  *
  * Emits JSON lines in production (so Vercel log drains can parse them) and
  * human-readable output in development. Automatically redacts common PII
- * fields (email, phone, name, to, from) before logging.
+ * fields (email, phone, name, to, from) and secret-bearing keys / values
+ * before logging.
  *
  * Usage:
  *   import { logger } from '@/lib/logger';
@@ -23,11 +24,42 @@ const MIN_LEVEL: LogLevel = (process.env.LOG_LEVEL as LogLevel) ?? (process.env.
 
 const PII_KEYS = new Set(['email', 'phone', 'to', 'from', 'phoneNumber', 'ownerPhone', 'ownerEmail', 'guestPhone', 'guestEmail', 'leadPhone', 'leadEmail', 'contactPhone', 'contactEmail']);
 
-function redactValue(value: unknown): unknown {
+const SECRET_KEY_RE =
+  /secret|password|authorization|api[_-]?key|private[_-]?key|client[_-]?secret|(?:access|refresh|id)?[_-]?token|service[_-]?role/i;
+
+// Literal patterns only — no nested quantifiers. Applied to every string
+// value and to serialized error messages so a provider "invalid key: sk-…"
+// line cannot land in Vercel logs or get forwarded to a browser.
+const SECRET_VALUE_PATTERNS: RegExp[] = [
+  /sk-[A-Za-z0-9_-]{8,}/g,
+  /sk_(?:live|test)_[A-Za-z0-9]+/g,
+  /rk_(?:live|test)_[A-Za-z0-9]+/g,
+  /\bre_[A-Za-z0-9]{8,}/g,
+  /\bwhsec_[A-Za-z0-9]+/g,
+  /Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi,
+  /eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
+  /\bKEY[A-Z0-9]{16,}/g,
+  /\bak_[A-Za-z0-9]{8,}/g,
+  /\bxox[baprs]-[A-Za-z0-9-]+/g,
+  /\bgh[ps]_[A-Za-z0-9]{20,}/g,
+  /(?:API[_-]?KEY|SECRET|TOKEN|PASSWORD)\s*[:=]\s*\S+/gi,
+];
+
+function redactPiiValue(value: unknown): unknown {
   if (typeof value !== 'string' || value.length === 0) return value;
   if (value.length <= 4) return '***';
   // Preserve last 4 chars so phone/email tails are debuggable
   return `***${value.slice(-4)}`;
+}
+
+/** Strip secret-shaped substrings from a string. Safe to call on any text. */
+export function redactSecretText(text: string): string {
+  let out = text;
+  for (const pattern of SECRET_VALUE_PATTERNS) {
+    pattern.lastIndex = 0;
+    out = out.replace(pattern, '[REDACTED]');
+  }
+  return out;
 }
 
 function redact(context: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
@@ -35,9 +67,13 @@ function redact(context: Record<string, unknown> | undefined): Record<string, un
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(context)) {
     if (PII_KEYS.has(key)) {
-      out[key] = redactValue(value);
+      out[key] = redactPiiValue(value);
+    } else if (SECRET_KEY_RE.test(key) && typeof value === 'string') {
+      out[key] = '[REDACTED]';
     } else if (value && typeof value === 'object' && !Array.isArray(value)) {
       out[key] = redact(value as Record<string, unknown>);
+    } else if (typeof value === 'string') {
+      out[key] = redactSecretText(value);
     } else {
       out[key] = value;
     }
@@ -50,19 +86,20 @@ function serializeError(err: unknown): Record<string, unknown> {
   if (err instanceof Error) {
     return {
       name: err.name,
-      message: err.message,
-      ...(process.env.NODE_ENV !== 'production' && { stack: err.stack }),
+      message: redactSecretText(err.message),
+      ...(process.env.NODE_ENV !== 'production' && { stack: err.stack ? redactSecretText(err.stack) : err.stack }),
     };
   }
   if (typeof err === 'object') {
     const e = err as Record<string, unknown>;
+    const message = typeof e.message === 'string' ? e.message : undefined;
     return {
-      message: e.message,
+      message: message !== undefined ? redactSecretText(message) : message,
       code: e.code,
       status: e.status ?? e.statusCode,
     };
   }
-  return { message: String(err) };
+  return { message: redactSecretText(String(err)) };
 }
 
 function emit(level: LogLevel, message: string, context?: Record<string, unknown>, err?: unknown) {
@@ -75,7 +112,7 @@ function emit(level: LogLevel, message: string, context?: Record<string, unknown
     const payload = {
       level,
       ts: new Date().toISOString(),
-      msg: message,
+      msg: redactSecretText(message),
       ...(ctx ?? {}),
       ...(errObj ? { err: errObj } : {}),
     };
@@ -85,9 +122,9 @@ function emit(level: LogLevel, message: string, context?: Record<string, unknown
   } else {
     const stream = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log;
     if (ctx || errObj) {
-      stream(`[${level}] ${message}`, { ...(ctx ?? {}), ...(errObj ? { err: errObj } : {}) });
+      stream(`[${level}] ${redactSecretText(message)}`, { ...(ctx ?? {}), ...(errObj ? { err: errObj } : {}) });
     } else {
-      stream(`[${level}] ${message}`);
+      stream(`[${level}] ${redactSecretText(message)}`);
     }
   }
 }

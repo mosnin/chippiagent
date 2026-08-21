@@ -11,6 +11,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { Redis } from '@upstash/redis';
+import { redactSecretText } from '@/lib/logger';
 
 const redis = new Redis({
   url: process.env.KV_REST_API_URL ?? '',
@@ -50,7 +51,9 @@ export async function POST(req: NextRequest) {
 
   const event = JSON.stringify({
     type,
-    message: String(message).slice(0, 1_000), // cap to prevent huge payloads reaching browser
+    // Cap + redact — Modal used to publish `Agent error: {exc}` and
+    // provider SDKs embed API keys in those exception strings.
+    message: redactSecretText(String(message)).slice(0, 1_000),
     agentType: agentType ? String(agentType).slice(0, 50) : '',
     metadata: metadata ?? {},
     ts: Date.now(),

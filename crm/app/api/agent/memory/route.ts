@@ -70,7 +70,7 @@ export async function GET(req: NextRequest) {
   }
 
   const { data, error } = await query;
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: 'Failed to load memory' }, { status: 500 });
   if (!data || data.length === 0) return NextResponse.json([]);
 
   // Resolve entity names in two batched queries

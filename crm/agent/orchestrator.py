@@ -50,6 +50,7 @@ from tour_follow_up import (
     tour_follow_up_instruction,
 )
 from llm import extract_usage, fallback_models, resolve_chat_model
+from secret_mask import CLIENT_ERROR_MESSAGE, mask_secrets
 from tools.streaming import publish_event
 from tools.base import result_is_ok
 from trajectories import normalize_tool_call, record_trajectory
@@ -677,9 +678,10 @@ async def _run_locked(
         # Re-queue so a crashed run doesn't silently drop the realtor's
         # events; the per-trigger attempt cap stops a poison trigger looping.
         await requeue_triggers(space.id, triggers, increment_attempts=True)
-        await publish_event(ctx, "error", f"Agent error: {exc}", agent_type="chippi")
+        await publish_event(ctx, "error", CLIENT_ERROR_MESSAGE, agent_type="chippi")
         # Make the failure visible. A swallowed error leaves the realtor's
         # activity feed blank with no signal that a run even happened.
+        # Do not interpolate the exception — provider SDKs embed API keys.
         try:
             await save_memory(
                 space_id=space.id,
@@ -688,8 +690,7 @@ async def _run_locked(
                 memory_type="observation",
                 content=(
                     "Autonomous run failed on "
-                    f"{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}: "
-                    f"{str(exc)[:200]}"
+                    f"{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}."
                 ),
                 importance=0.3,
             )
@@ -704,7 +705,7 @@ async def _run_locked(
             model=chippi.model,
             total_tokens=total_tokens,
             tool_calls=trajectory_tool_calls,
-            extra={"error": str(exc)[:500]},
+            extra={"error": mask_secrets(str(exc))[:500]},
         )
         return
     finally:

@@ -362,8 +362,14 @@ function proxyModalStream({
             } else if (type === 'error') {
               // Persist whatever streamed before the failure so a mid-turn
               // Modal error doesn't erase the assistant message the user saw.
+              // Never forward Modal's exception text — provider SDKs embed
+              // API keys in auth-failure messages.
+              const raw = typeof evt.message === 'string' ? evt.message : '';
+              if (raw) {
+                logger.warn('[ai/task] modal error event', { spaceId, message: raw });
+              }
               await persistOnce();
-              push(controller, { type: 'error', message: evt.message ?? 'Agent error' });
+              push(controller, { type: 'error', message: chippiErrorMessage('internal') });
             }
           }
         }

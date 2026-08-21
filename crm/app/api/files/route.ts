@@ -244,7 +244,7 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     logger.error('[files] upload failed', { spaceId: space.id }, err as Error);
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : 'Upload failed' },
+      { error: 'Upload failed' },
       { status: 500 },
     );
   }
