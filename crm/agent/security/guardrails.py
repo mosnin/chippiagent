@@ -1,61 +1,74 @@
-"""Agent guardrails — pre-run safety checks for Chippi.
+"""Payload safety for Chippi — never a human-confirm gate.
 
-Input guardrail (fires before the first LLM call):
-  pending_drafts_guardrail — blocks the run if the realtor already has
-  ≥10 unreviewed drafts. Prevents the agent from burying the realtor in
-  drafts they haven't had time to review.
+The orchestrator executes tools. Security may reject a truly invalid or
+unsafe payload (tenant escape, malformed args, null bytes). 'Needs human
+approval' is not a valid block and is never returned from these checks.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from agents import Agent, GuardrailFunctionOutput, RunContextWrapper, input_guardrail
 
-from db import supabase
-from security.context import AgentContext
+# Keys the model must never pass — space is injected via AgentContext.
+_TENANT_ESCAPE_KEYS = frozenset({"spaceid", "space_id"})
+
+_HITL_PHRASES = (
+    "needs human approval",
+    "need human approval",
+    "awaiting approval",
+    "awaiting review",
+    "needs approval",
+    "permission required",
+    "pending approval",
+    "pending-tool",
+    "tap yes",
+)
 
 
-DRAFT_OVERLOAD_THRESHOLD = 10
+def is_hitl_block_reason(reason: str | None) -> bool:
+    """True when a block is 'wait for a person' — not a valid block."""
+    if not reason:
+        return False
+    lower = reason.lower()
+    return any(phrase in lower for phrase in _HITL_PHRASES)
 
 
-@input_guardrail
-async def pending_drafts_guardrail(
-    ctx: RunContextWrapper[AgentContext],
-    agent: Agent,
-    input: Any,  # noqa: A002
-) -> GuardrailFunctionOutput:
-    """Block the agent run when the space already has too many unreviewed drafts.
+def payload_is_unsafe(payload: Any) -> str | None:
+    """Return a rejection reason, or None if the payload may execute.
 
-    If the realtor hasn't reviewed 10+ drafts from previous runs, creating
-    more will overwhelm them and devalue every suggestion. Wait until the
-    inbox is cleared.
+    Rejects:
+      - tool arguments that are a list (SDK treats this as fail-closed HITL)
+      - spaceId / space_id in args (tenant escape)
+      - embedded null bytes
+
+    Never returns a 'needs human approval' reason.
     """
-    db = await supabase()
-    result = await (
-        db.table("AgentDraft")
-        .select("id", count="exact")
-        .eq("spaceId", ctx.context.space_id)
-        .eq("status", "pending")
-        .execute()
-    )
-    count = result.count or 0
+    if payload is None:
+        return None
+    if isinstance(payload, (list, tuple)):
+        return "invalid payload: tool arguments must be an object"
+    if isinstance(payload, str):
+        if "\x00" in payload:
+            return "invalid payload: null byte"
+        return None
+    if not isinstance(payload, dict):
+        return None
 
-    if count >= DRAFT_OVERLOAD_THRESHOLD:
-        return GuardrailFunctionOutput(
-            output_info={
-                "pending_drafts": count,
-                "threshold": DRAFT_OVERLOAD_THRESHOLD,
-                "reason": (
-                    f"Workspace has {count} unreviewed drafts "
-                    f"(threshold: {DRAFT_OVERLOAD_THRESHOLD}). "
-                    "Review your agent inbox before the next run."
-                ),
-            },
-            tripwire_triggered=True,
-        )
-
-    return GuardrailFunctionOutput(
-        output_info={"pending_drafts": count},
-        tripwire_triggered=False,
-    )
+    for key, value in payload.items():
+        folded = str(key).replace("-", "_").casefold()
+        if folded in _TENANT_ESCAPE_KEYS:
+            return "unsafe payload: spaceId is not a tool argument"
+        if isinstance(value, str) and "\x00" in value:
+            return "invalid payload: null byte"
+        if isinstance(value, dict):
+            nested = payload_is_unsafe(value)
+            if nested:
+                return nested
+        if isinstance(value, (list, tuple)):
+            for item in value:
+                if isinstance(item, dict):
+                    nested = payload_is_unsafe(item)
+                    if nested:
+                        return nested
+    return None
