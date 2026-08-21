@@ -1,21 +1,27 @@
 """First-touch SMS for inbound leads — autonomous-run backstop.
 
-The TypeScript event trigger (`lib/agent/first-touch.ts`) drafts as soon as
+The TypeScript event trigger (`lib/agent/first-touch.ts`) sends as soon as
 a lead lands. This module does the same job when the autonomous run drains
-the trigger queue, so a missed fire-time draft is filled here.
+the trigger queue, so a missed fire-time send is filled here.
 
-Never sends. Status is always pending. Two concrete showing windows.
-Voice comes from the assigned workspace's AIUserProfile.
+Sends through Telnyx. Status is sent. Two concrete showing windows.
+Voice comes from the assigned workspace's AIUserProfile. Missing
+credentials fail — they do not fall back to a pending draft.
 """
 
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 INBOUND_LEAD_EVENTS = frozenset({"new_lead", "application_submitted"})
 _DEDUPE_WINDOW_HOURS = 48
+_FIRST_TOUCH_REASON_MARK = "First-touch SMS"
+_FIRST_TOUCH_REASON = (
+    "First-touch SMS for a new inbound lead — two showing windows. Sent."
+)
 
 _TONE_MARKS = {
     "warm": ("this is", "which works"),
@@ -27,6 +33,43 @@ _TONE_MARKS = {
 
 def is_inbound_lead_event(event: str | None) -> bool:
     return bool(event) and event in INBOUND_LEAD_EVENTS
+
+
+def is_first_touch_draft(row: dict[str, Any] | None) -> bool:
+    return bool(row) and _FIRST_TOUCH_REASON_MARK in (row.get("reasoning") or "")
+
+
+async def send_sms(*, to: str | None, body: str, label: str = "SMS") -> None:
+    """Send through the Telnyx path. Fail if credentials or the number are missing."""
+    api_key = os.environ.get("TELNYX_API_KEY")
+    from_number = os.environ.get("TELNYX_FROM_NUMBER")
+    phone = (to or "").strip()
+    if not api_key or not from_number:
+        raise ValueError(f"{label} SMS send failed: Telnyx credentials missing")
+    if not phone:
+        raise ValueError(f"{label} SMS send failed: contact has no phone number")
+    import httpx
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.post(
+            "https://api.telnyx.com/v2/messages",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={"from": from_number, "to": phone, "text": body},
+        )
+    if response.status_code >= 400:
+        detail = ""
+        try:
+            payload = response.json()
+            errors = payload.get("errors") if isinstance(payload, dict) else None
+            if errors:
+                detail = errors[0].get("detail") or ""
+        except Exception:  # noqa: BLE001
+            detail = ""
+        suffix = f": {detail}" if detail else f": Telnyx error {response.status_code}"
+        raise ValueError(f"{label} SMS send failed{suffix}")
 
 
 def first_name_of(full: str | None, fallback: str = "there") -> str:
@@ -203,9 +246,9 @@ def first_touch_instruction(triggers: list[dict]) -> str | None:
     for t in inbound:
         lines.append(f"- {t.get('event')} contactId: {t['contactId']}")
     return (
-        "FIRST TOUCH — a new inbound lead just arrived. Draft one short SMS "
+        "FIRST TOUCH — a new inbound lead just arrived. Send one short SMS "
         "in the assigned realtor's voice with two concrete showing windows. "
-        "Park it as a pending AgentDraft. Never send.\n" + "\n".join(lines)
+        "Do not park a draft. Do not wait for approval.\n" + "\n".join(lines)
     )
 
 
@@ -237,7 +280,7 @@ async def ensure_first_touch_draft(
     *,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Create or fill a pending first-touch SMS. Never sends."""
+    """Send a first-touch SMS. Persists sent. Never parks pending."""
     from db import supabase
     from tools.base import with_retry
 
@@ -246,7 +289,7 @@ async def ensure_first_touch_draft(
 
     check = await (
         db.table("Contact")
-        .select("id,name,address,properties,applicationData")
+        .select("id,name,phone,address,properties,applicationData")
         .eq("id", contact_id)
         .eq("spaceId", space_id)
         .maybe_single()
@@ -259,25 +302,42 @@ async def ensure_first_touch_draft(
     cutoff = (when - timedelta(hours=_DEDUPE_WINDOW_HOURS)).isoformat()
     existing = await (
         db.table("AgentDraft")
-        .select("id,content,status,channel")
+        .select("id,content,status,channel,reasoning")
         .eq("spaceId", space_id)
         .eq("contactId", contact_id)
         .eq("channel", "sms")
-        .eq("status", "pending")
         .gte("createdAt", cutoff)
         .order("createdAt", desc=True)
-        .limit(1)
+        .limit(20)
         .execute()
     )
-    prior = existing.data[0] if existing.data else None
-    if prior and (prior.get("content") or "").strip():
+    drafts = existing.data or []
+    already_sent = next(
+        (
+            row
+            for row in drafts
+            if is_first_touch_draft(row)
+            and row.get("status") == "sent"
+            and (row.get("content") or "").strip()
+        ),
+        None,
+    )
+    empty_stub = next(
+        (
+            row
+            for row in drafts
+            if is_first_touch_draft(row) and not (row.get("content") or "").strip()
+        ),
+        None,
+    )
+    if already_sent:
         return {
             "action": "deduped",
-            "draftId": prior["id"],
-            "status": "pending",
+            "draftId": already_sent["id"],
+            "status": "sent",
             "channel": "sms",
-            "content": prior["content"],
-            "sent": False,
+            "content": already_sent["content"],
+            "sent": True,
         }
 
     profile_res = await (
@@ -324,35 +384,34 @@ async def ensure_first_touch_draft(
         business_name=business,
     )
 
+    await send_sms(to=contact.get("phone"), body=content, label="first-touch")
+
     expires_at = (when + timedelta(days=7)).isoformat()
-    if prior and not (prior.get("content") or "").strip():
+    if empty_stub:
         await with_retry(
             lambda: db.table("AgentDraft")
             .update(
                 {
                     "content": content,
-                    "reasoning": (
-                        "First-touch SMS for a new inbound lead — two showing "
-                        "windows, awaiting approval. Never sent."
-                    ),
+                    "reasoning": _FIRST_TOUCH_REASON,
                     "priority": 80,
-                    "status": "pending",
+                    "status": "sent",
                     "expiresAt": expires_at,
                     "updatedAt": when.isoformat(),
                 }
             )
-            .eq("id", prior["id"])
+            .eq("id", empty_stub["id"])
             .eq("spaceId", space_id)
             .execute()
         )
         return {
             "action": "filled",
-            "draftId": prior["id"],
-            "status": "pending",
+            "draftId": empty_stub["id"],
+            "status": "sent",
             "channel": "sms",
             "content": content,
             "windows": [w["label"] for w in windows],
-            "sent": False,
+            "sent": True,
         }
 
     draft = {
@@ -361,22 +420,19 @@ async def ensure_first_touch_draft(
         "contactId": contact_id,
         "channel": "sms",
         "content": content,
-        "reasoning": (
-            "First-touch SMS for a new inbound lead — two showing windows, "
-            "awaiting approval. Never sent."
-        ),
+        "reasoning": _FIRST_TOUCH_REASON,
         "priority": 80,
-        "status": "pending",
+        "status": "sent",
         "expiresAt": expires_at,
     }
     result = await with_retry(lambda: db.table("AgentDraft").insert(draft).execute())
     created = result.data[0] if result.data else draft
     return {
-        "action": "drafted",
+        "action": "sent",
         "draftId": created.get("id", draft["id"]),
-        "status": "pending",
+        "status": "sent",
         "channel": "sms",
         "content": content,
         "windows": [w["label"] for w in windows],
-        "sent": False,
+        "sent": True,
     }

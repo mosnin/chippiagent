@@ -1,30 +1,36 @@
 /**
  * Follow-up SMS after a showing actually finishes.
  *
- * The tour PATCH already fires `tour_completed`. This drafts one short
- * text in the assigned realtor's voice and parks it pending. The
+ * The tour PATCH already fires `tour_completed`. This writes one short
+ * text in the assigned realtor's voice and sends it through Telnyx. The
  * follow-up is an ask — how did it feel, do they want to talk next —
  * never a claim that a deal closed or a time is booked / reserved /
  * locked / held.
  *
- * Always pending. Nothing is sent from here.
+ * No approval inbox. No pending persist. Missing credentials fail.
  */
 
 import { supabase } from '@/lib/supabase';
 import { logger } from '@/lib/logger';
-import { firstNameOf, normalizeTone, type AgentTone, type FirstTouchVoice } from '@/lib/agent/first-touch';
+import {
+  firstNameOf,
+  normalizeTone,
+  sendAutonomousSms,
+  type AgentTone,
+  type FirstTouchVoice,
+} from '@/lib/agent/first-touch';
 import { isTourCompletedEvent } from '@/lib/agent/trigger-policy';
 
-export type TourFollowUpAction = 'drafted' | 'deduped' | 'filled' | 'skipped';
+export type TourFollowUpAction = 'sent' | 'deduped' | 'filled' | 'skipped';
 
 export interface TourFollowUpDraftResult {
   action: TourFollowUpAction;
   draftId?: string;
   contactId: string;
   channel: 'sms';
-  status: 'pending' | 'skipped';
+  status: 'sent' | 'skipped';
   content: string;
-  sent: false;
+  sent: boolean;
   reason?: string;
 }
 
@@ -43,8 +49,7 @@ export interface DraftTourFollowUpInput {
 
 const DEDUPE_WINDOW_HOURS = 48;
 const REASON_MARK = 'Tour-completed follow-up SMS';
-const REASON =
-  'Tour-completed follow-up SMS — ask how the showing felt, awaiting approval. Never sent.';
+const REASON = 'Tour-completed follow-up SMS — ask how the showing felt. Sent.';
 
 export function isTourCompletedFollowUpEvent(event: string): boolean {
   return isTourCompletedEvent(event);
@@ -54,9 +59,12 @@ export function isTourFollowUpDraft(row: { reasoning?: string | null }): boolean
   return (row.reasoning ?? '').includes(REASON_MARK);
 }
 
-export function assertPendingDraftPersist(row: { status: string }): void {
-  if (row.status !== 'pending') {
-    throw new Error('tour-follow-up persist must stay pending');
+export function assertSentDraftPersist(row: { status: string }): void {
+  if (row.status === 'pending') {
+    throw new Error('tour-follow-up persist must not stay pending');
+  }
+  if (row.status !== 'sent') {
+    throw new Error('tour-follow-up persist must be sent');
   }
 }
 
@@ -187,7 +195,7 @@ export async function draftTourFollowUpForContact(
   const now = input.now ?? new Date();
   const { data: contact, error: contactError } = await supabase
     .from('Contact')
-    .select('id,name,address,properties,applicationData,spaceId')
+    .select('id,name,phone,address,properties,applicationData,spaceId')
     .eq('id', input.contactId)
     .eq('spaceId', input.spaceId)
     .maybeSingle();
@@ -236,7 +244,10 @@ export async function draftTourFollowUpForContact(
     .limit(20);
 
   const drafts = (existingRows ?? []) as DraftRow[];
-  const pending = drafts.find((row) => isTourFollowUpDraft(row) && row.status === 'pending');
+  const alreadySent = drafts.find(
+    (row) => isTourFollowUpDraft(row) && row.status === 'sent' && Boolean(row.content?.trim()),
+  );
+  const emptyStub = drafts.find((row) => isTourFollowUpDraft(row) && !row.content?.trim());
 
   const [profileRes, settingRes, spaceRes] = await Promise.all([
     supabase
@@ -273,60 +284,66 @@ export async function draftTourFollowUpForContact(
     throw new Error('tour-follow-up draft is empty');
   }
 
-  if (pending?.content?.trim()) {
+  if (alreadySent) {
     return {
       action: 'deduped',
-      draftId: pending.id,
+      draftId: alreadySent.id,
       contactId: input.contactId,
       channel: 'sms',
-      status: 'pending',
-      content: pending.content,
-      sent: false,
+      status: 'sent',
+      content: alreadySent.content!,
+      sent: true,
     };
   }
 
+  await sendAutonomousSms({
+    to: (contact as { phone?: string | null }).phone,
+    body: content,
+    label: 'tour-follow-up',
+  });
+
   const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
   const row = {
-    id: pending?.id ?? crypto.randomUUID(),
+    id: emptyStub?.id ?? crypto.randomUUID(),
     spaceId: input.spaceId,
     contactId: input.contactId,
     channel: 'sms' as const,
     content,
     reasoning: REASON,
     priority: 82,
-    status: 'pending' as const,
+    status: 'sent' as const,
     expiresAt,
     updatedAt: now.toISOString(),
   };
-  assertPendingDraftPersist(row);
+  assertSentDraftPersist(row);
 
-  if (pending && !pending.content?.trim()) {
+  if (emptyStub) {
     const update = {
       content: row.content,
       reasoning: row.reasoning,
       priority: row.priority,
-      status: 'pending' as const,
+      status: 'sent' as const,
       expiresAt: row.expiresAt,
       updatedAt: row.updatedAt,
     };
-    assertPendingDraftPersist(update);
+    assertSentDraftPersist(update);
     const { error: updateError } = await supabase
       .from('AgentDraft')
       .update(update)
-      .eq('id', pending.id)
+      .eq('id', emptyStub.id)
       .eq('spaceId', input.spaceId);
     if (updateError) {
-      logger.error('[tour-follow-up] failed to fill empty draft', { spaceId: input.spaceId }, updateError);
-      throw new Error('Failed to fill tour-follow-up draft');
+      logger.error('[tour-follow-up] failed to record sent SMS', { spaceId: input.spaceId }, updateError);
+      throw new Error('Failed to record tour-follow-up SMS');
     }
     return {
       action: 'filled',
-      draftId: pending.id,
+      draftId: emptyStub.id,
       contactId: input.contactId,
       channel: 'sms',
-      status: 'pending',
+      status: 'sent',
       content,
-      sent: false,
+      sent: true,
     };
   }
 
@@ -337,16 +354,16 @@ export async function draftTourFollowUpForContact(
     .maybeSingle();
   if (insertError) {
     logger.error('[tour-follow-up] insert failed', { spaceId: input.spaceId }, insertError);
-    throw new Error('Failed to create tour-follow-up draft');
+    throw new Error('Failed to record tour-follow-up SMS');
   }
 
   return {
-    action: 'drafted',
+    action: 'sent',
     draftId: (inserted as { id?: string } | null)?.id ?? row.id,
     contactId: input.contactId,
     channel: 'sms',
-    status: 'pending',
+    status: 'sent',
     content,
-    sent: false,
+    sent: true,
   };
 }

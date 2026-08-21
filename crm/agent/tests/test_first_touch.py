@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -15,22 +16,27 @@ from first_touch import (
     format_window_label,
     is_inbound_lead_event,
     propose_two_showing_windows,
+    send_sms,
 )
 
 
 SOURCE = Path(__file__).resolve().parents[1] / "first_touch.py"
 
 
-def test_source_never_sends():
+def test_source_sends_and_never_parks_pending():
     text = SOURCE.read_text()
-    assert "send_sms" not in text
+    assert "send_sms" in text
+    assert "async def send_sms" in text
+    assert '"status": "sent"' in text
+    assert '"status": "pending"' not in text
+    assert "awaiting approval" not in text
+    assert "Never sent" not in text
+    assert "draft parked" not in text.lower()
+    assert "Park it" not in text
     assert "book_tour" not in text
-    assert "status\": \"sent\"" not in text
-    assert '"status": "sent"' not in text
     assert '"status": "live"' not in text
     assert '"status": "booked"' not in text
     assert "Chippy" not in text
-    assert '"status": "pending"' in text
 
 
 def test_inbound_events():
@@ -116,10 +122,20 @@ def test_opening_prompt_names_the_first_touch_job():
         [{"event": "new_lead", "contactId": "c1"}]
     )
     assert block is not None
-    assert "Never send" in block
+    assert "Send one short SMS" in block
+    assert "Do not park a draft" in block
+    assert "Do not wait for approval" in block
+    assert "Never send" not in block
     assert "two concrete showing windows" in block
     assert "c1" in block
     assert first_touch_instruction([{"event": "tour_completed", "contactId": "c1"}]) is None
+
+
+def test_send_sms_fails_when_credentials_missing(monkeypatch):
+    monkeypatch.delenv("TELNYX_API_KEY", raising=False)
+    monkeypatch.delenv("TELNYX_FROM_NUMBER", raising=False)
+    with pytest.raises(ValueError, match="credentials missing"):
+        asyncio.run(send_sms(to="+15555550123", body="hi", label="first-touch"))
 
 
 def test_format_window_label_is_concrete():

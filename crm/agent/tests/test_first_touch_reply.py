@@ -20,16 +20,19 @@ from first_touch_reply import (
 SOURCE = Path(__file__).resolve().parents[1] / "first_touch_reply.py"
 
 
-def test_source_never_sends():
+def test_source_sends_and_never_parks_pending():
     text = SOURCE.read_text()
-    assert "send_sms" not in text
+    assert "send_sms" in text
+    assert '"status": "sent"' in text
+    assert '"status": "pending"' not in text
+    assert "awaiting approval" not in text
+    assert "Never sent" not in text
+    assert "draft parked" not in text.lower()
+    assert "Park it" not in text
     assert "book_tour" not in text
-    assert "status\": \"sent\"" not in text
-    assert '"status": "sent"' not in text
     assert '"status": "live"' not in text
     assert '"status": "booked"' not in text
     assert "Chippy" not in text
-    assert '"status": "pending"' in text
 
 
 def test_inbound_message_event():
@@ -129,7 +132,10 @@ def test_opening_prompt_names_the_reply_job():
         [{"event": "inbound_message", "contactId": "c1"}]
     )
     assert block is not None
-    assert "Never send" in block
+    assert "Send one" in block
+    assert "Do not park a draft" in block
+    assert "Do not wait for approval" in block
+    assert "Never send" not in block
     assert "book" in block.lower()
     assert "c1" in block
     assert first_touch_reply_instruction([{"event": "new_lead", "contactId": "c1"}]) is None

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const sendSMS = vi.fn();
 
@@ -86,18 +86,30 @@ const SOURCE = readFileSync(
   'utf8',
 );
 
+const OLD_ENV = { ...process.env };
+
 beforeEach(() => {
   tables = {};
   insertedDraft = null;
   updatedDraft = null;
+  process.env.TELNYX_API_KEY = 'test-key';
+  process.env.TELNYX_FROM_NUMBER = '+15555550100';
   sendSMS.mockReset();
+  sendSMS.mockResolvedValue(true);
+});
+
+afterEach(() => {
+  process.env = { ...OLD_ENV };
 });
 
 describe('first-touch source invariants', () => {
-  it('never imports a sender and never writes status=sent|live|booked', () => {
-    expect(SOURCE).not.toMatch(/sendSMS|send_sms|\/api\/agent\/send|from '@\/lib\/sms'|from '@\/lib\/delivery'/);
+  it('sends through Telnyx and never persists pending', () => {
+    expect(SOURCE).toMatch(/from '@\/lib\/sms'/);
+    expect(SOURCE).toMatch(/sendSMS/);
+    expect(SOURCE).toMatch(/status:\s*['"]sent['"]/);
+    expect(SOURCE).not.toMatch(/status:\s*['"]pending['"]/);
+    expect(SOURCE).not.toMatch(/awaiting approval|Never sent|draft parked/i);
     expect(SOURCE).not.toMatch(/book_tour|from\(['"]Tour['"]\)/);
-    expect(SOURCE).not.toMatch(/status:\s*['"](?:sent|live|booked)['"]/);
     expect(SOURCE).not.toMatch(/Chippy/);
   });
 });
@@ -226,6 +238,7 @@ describe('draftFirstTouchForLead', () => {
         single: {
           id: 'c1',
           name: 'Sam Rivera',
+          phone: '+15555550123',
           address: '1422 Pine',
           properties: [],
           applicationData: null,
@@ -247,31 +260,64 @@ describe('draftFirstTouchForLead', () => {
     };
   }
 
-  it('inserts a pending SMS and never sends', async () => {
+  it('sends the SMS through Telnyx and records it as sent', async () => {
     seedHappyPath();
     const result = await draftFirstTouchForLead({
       spaceId: 's1',
       contactId: 'c1',
       now: new Date('2026-08-21T14:00:00Z'),
     });
-    expect(result.sent).toBe(false);
-    expect(result.status).toBe('pending');
+    expect(result.sent).toBe(true);
+    expect(result.status).toBe('sent');
     expect(result.channel).toBe('sms');
-    expect(result.action).toBe('drafted');
+    expect(result.action).toBe('sent');
     expect(result.content.trim().length).toBeGreaterThan(0);
     expect(result.windows).toHaveLength(2);
     expect(result.content).toContain(result.windows[0]);
     expect(result.content).toContain(result.windows[1]);
     expect(result.content).toContain('Jordan');
+    expect(sendSMS).toHaveBeenCalledWith({
+      to: '+15555550123',
+      body: result.content,
+    });
     expect(insertedDraft).toMatchObject({
       spaceId: 's1',
       contactId: 'c1',
       channel: 'sms',
-      status: 'pending',
+      status: 'sent',
     });
-    expect(['sent', 'live', 'booked']).not.toContain(insertedDraft?.status);
+    expect(insertedDraft?.status).not.toBe('pending');
     expect(String(insertedDraft?.content ?? '')).not.toMatch(/\b(sent|live|booked|reserved|locked)\b/i);
-    expect(sendSMS).not.toHaveBeenCalled();
+    expect(String(insertedDraft?.reasoning ?? '')).not.toMatch(/awaiting approval|Never sent|draft parked/i);
+  });
+
+  it('fails with a real error when Telnyx credentials are missing — never parks pending', async () => {
+    seedHappyPath();
+    delete process.env.TELNYX_API_KEY;
+    delete process.env.TELNYX_FROM_NUMBER;
+    await expect(
+      draftFirstTouchForLead({
+        spaceId: 's1',
+        contactId: 'c1',
+        now: new Date('2026-08-21T14:00:00Z'),
+      }),
+    ).rejects.toThrow(/Telnyx credentials missing/);
+    expect(insertedDraft).toBeNull();
+    expect(updatedDraft).toBeNull();
+  });
+
+  it('fails with a real error when the send path returns false — never parks pending', async () => {
+    seedHappyPath();
+    sendSMS.mockResolvedValue(false);
+    await expect(
+      draftFirstTouchForLead({
+        spaceId: 's1',
+        contactId: 'c1',
+        now: new Date('2026-08-21T14:00:00Z'),
+      }),
+    ).rejects.toThrow(/SMS send failed/);
+    expect(sendSMS).toHaveBeenCalled();
+    expect(insertedDraft).toBeNull();
   });
 
   it('fails closed when the draft would be empty', async () => {
@@ -293,23 +339,65 @@ describe('draftFirstTouchForLead', () => {
     expect(sendSMS).not.toHaveBeenCalled();
   });
 
-  it('returns an existing non-empty pending draft instead of sending a new one', async () => {
+  it('returns an existing sent SMS instead of sending a second one', async () => {
     seedHappyPath();
     tables.AgentDraft = {
-      rows: [{ id: 'd_old', content: 'Hey Sam, this is Jordan. I can do Tue 11am or Wed 4pm — which works?', status: 'pending', channel: 'sms' }],
+      rows: [
+        {
+          id: 'd_old',
+          content: 'Hey Sam, this is Jordan. I can do Tue 11am or Wed 4pm — which works?',
+          status: 'sent',
+          channel: 'sms',
+          reasoning: 'First-touch SMS for a new inbound lead — two showing windows. Sent.',
+        },
+      ],
     };
     const result = await draftFirstTouchForLead({ spaceId: 's1', contactId: 'c1' });
     expect(result.action).toBe('deduped');
     expect(result.draftId).toBe('d_old');
-    expect(result.sent).toBe(false);
+    expect(result.sent).toBe(true);
+    expect(result.status).toBe('sent');
     expect(insertedDraft).toBeNull();
     expect(sendSMS).not.toHaveBeenCalled();
   });
 
-  it('fills an empty pending stub so the draft becomes real', async () => {
+  it('does not treat a leftover pending row as done — it must send', async () => {
     seedHappyPath();
     tables.AgentDraft = {
-      rows: [{ id: 'd_empty', content: '   ', status: 'pending', channel: 'sms' }],
+      rows: [
+        {
+          id: 'd_old',
+          content: 'Hey Sam, this is Jordan. I can do Tue 11am or Wed 4pm — which works?',
+          status: 'pending',
+          channel: 'sms',
+          reasoning: 'First-touch SMS for a new inbound lead — two showing windows. Sent.',
+        },
+      ],
+    };
+    const result = await draftFirstTouchForLead({
+      spaceId: 's1',
+      contactId: 'c1',
+      now: new Date('2026-08-21T14:00:00Z'),
+    });
+    expect(result.sent).toBe(true);
+    expect(result.status).toBe('sent');
+    expect(sendSMS).toHaveBeenCalled();
+    expect(insertedDraft?.status).toBe('sent');
+    expect(insertedDraft?.status).not.toBe('pending');
+  });
+
+  it('fills an empty stub after a real send', async () => {
+    seedHappyPath();
+    tables.AgentDraft = {
+      rows: [
+        {
+          id: 'd_empty',
+          content: '   ',
+          status: 'pending',
+          channel: 'sms',
+          reasoning: 'First-touch SMS for a new inbound lead — two showing windows. Sent.',
+        },
+      ],
     };
     const result = await draftFirstTouchForLead({
       spaceId: 's1',
@@ -319,11 +407,12 @@ describe('draftFirstTouchForLead', () => {
     expect(result.action).toBe('filled');
     expect(result.draftId).toBe('d_empty');
     expect(result.content.trim().length).toBeGreaterThan(0);
-    expect(result.status).toBe('pending');
-    expect(result.sent).toBe(false);
+    expect(result.status).toBe('sent');
+    expect(result.sent).toBe(true);
+    expect(sendSMS).toHaveBeenCalled();
     expect(updatedDraft?.content).toBe(result.content);
-    expect(updatedDraft?.status).toBe('pending');
-    expect(sendSMS).not.toHaveBeenCalled();
+    expect(updatedDraft?.status).toBe('sent');
+    expect(updatedDraft?.status).not.toBe('pending');
   });
 });
 

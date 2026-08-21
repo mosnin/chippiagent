@@ -1,12 +1,13 @@
 """Follow-up SMS after a showing finishes — autonomous-run backstop.
 
-The TypeScript event trigger (`lib/agent/tour-follow-up.ts`) drafts as
+The TypeScript event trigger (`lib/agent/tour-follow-up.ts`) sends as
 soon as the tour is marked completed. This module does the same job when
 the autonomous run drains the trigger queue.
 
-Never sends. Status is always pending. The text is an ask — how did it
+Sends through Telnyx. Status is sent. The text is an ask — how did it
 feel, do they want to talk next — never a claim that a deal closed or a
-time is booked / reserved / locked / held.
+time is booked / reserved / locked / held. Missing credentials fail —
+they do not fall back to a pending draft.
 """
 
 from __future__ import annotations
@@ -15,15 +16,12 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from first_touch import first_name_of, normalize_tone
+from first_touch import first_name_of, normalize_tone, send_sms
 
 TOUR_COMPLETED_EVENT = "tour_completed"
 _DEDUPE_WINDOW_HOURS = 48
 _REASON_MARK = "Tour-completed follow-up SMS"
-_REASON = (
-    "Tour-completed follow-up SMS — ask how the showing felt, "
-    "awaiting approval. Never sent."
-)
+_REASON = "Tour-completed follow-up SMS — ask how the showing felt. Sent."
 
 _TONE_MARKS = {
     "warm": ("this is", "want to talk next"),
@@ -41,9 +39,11 @@ def is_tour_follow_up_draft(row: dict[str, Any] | None) -> bool:
     return bool(row) and _REASON_MARK in (row.get("reasoning") or "")
 
 
-def assert_pending_draft_persist(row: dict[str, Any]) -> None:
-    if row.get("status") != "pending":
-        raise ValueError("tour-follow-up persist must stay pending")
+def assert_sent_draft_persist(row: dict[str, Any]) -> None:
+    if row.get("status") == "pending":
+        raise ValueError("tour-follow-up persist must not stay pending")
+    if row.get("status") != "sent":
+        raise ValueError("tour-follow-up persist must be sent")
 
 
 def compose_tour_follow_up_sms(
@@ -140,10 +140,10 @@ def tour_follow_up_instruction(triggers: list[dict]) -> str | None:
             line += f" tourId: {t['tourId']}"
         lines.append(line)
     return (
-        "TOUR FOLLOW-UP — a showing just finished. Draft one short SMS "
+        "TOUR FOLLOW-UP — a showing just finished. Send one short SMS "
         "in the assigned realtor's voice asking how it felt and whether "
-        "they want to talk next steps. Park it as a pending AgentDraft. "
-        "Never send. Do not claim a deal is closed or a time is booked, "
+        "they want to talk next steps. Do not park a draft. Do not wait "
+        "for approval. Do not claim a deal is closed or a time is booked, "
         "reserved, locked, or held.\n" + "\n".join(lines)
     )
 
@@ -196,7 +196,7 @@ async def ensure_tour_follow_up_draft(
     tour_id: str | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Create or fill a pending tour-follow-up SMS. Never sends."""
+    """Send a tour-follow-up SMS. Persists sent. Never parks pending."""
     from db import supabase
     from tools.base import with_retry
 
@@ -205,7 +205,7 @@ async def ensure_tour_follow_up_draft(
 
     check = await (
         db.table("Contact")
-        .select("id,name,address,properties,applicationData")
+        .select("id,name,phone,address,properties,applicationData")
         .eq("id", contact_id)
         .eq("spaceId", space_id)
         .maybe_single()
@@ -245,11 +245,21 @@ async def ensure_tour_follow_up_draft(
         .execute()
     )
     drafts = existing.data or []
-    pending = next(
+    already_sent = next(
         (
             row
             for row in drafts
-            if is_tour_follow_up_draft(row) and row.get("status") == "pending"
+            if is_tour_follow_up_draft(row)
+            and row.get("status") == "sent"
+            and (row.get("content") or "").strip()
+        ),
+        None,
+    )
+    empty_stub = next(
+        (
+            row
+            for row in drafts
+            if is_tour_follow_up_draft(row) and not (row.get("content") or "").strip()
         ),
         None,
     )
@@ -290,41 +300,43 @@ async def ensure_tour_follow_up_draft(
     if not content.strip():
         raise ValueError("tour-follow-up draft is empty")
 
-    if pending and (pending.get("content") or "").strip():
+    if already_sent:
         return {
             "action": "deduped",
-            "draftId": pending["id"],
-            "status": "pending",
+            "draftId": already_sent["id"],
+            "status": "sent",
             "channel": "sms",
-            "content": pending["content"],
-            "sent": False,
+            "content": already_sent["content"],
+            "sent": True,
         }
 
+    await send_sms(to=contact.get("phone"), body=content, label="tour-follow-up")
+
     expires_at = (when + timedelta(days=7)).isoformat()
-    if pending and not (pending.get("content") or "").strip():
+    if empty_stub:
         update = {
             "content": content,
             "reasoning": _REASON,
             "priority": 82,
-            "status": "pending",
+            "status": "sent",
             "expiresAt": expires_at,
             "updatedAt": when.isoformat(),
         }
-        assert_pending_draft_persist(update)
+        assert_sent_draft_persist(update)
         await with_retry(
             lambda: db.table("AgentDraft")
             .update(update)
-            .eq("id", pending["id"])
+            .eq("id", empty_stub["id"])
             .eq("spaceId", space_id)
             .execute()
         )
         return {
             "action": "filled",
-            "draftId": pending["id"],
-            "status": "pending",
+            "draftId": empty_stub["id"],
+            "status": "sent",
             "channel": "sms",
             "content": content,
-            "sent": False,
+            "sent": True,
         }
 
     draft = {
@@ -335,17 +347,17 @@ async def ensure_tour_follow_up_draft(
         "content": content,
         "reasoning": _REASON,
         "priority": 82,
-        "status": "pending",
+        "status": "sent",
         "expiresAt": expires_at,
     }
-    assert_pending_draft_persist(draft)
+    assert_sent_draft_persist(draft)
     result = await with_retry(lambda: db.table("AgentDraft").insert(draft).execute())
     created = result.data[0] if result.data else draft
     return {
-        "action": "drafted",
+        "action": "sent",
         "draftId": created.get("id", draft["id"]),
-        "status": "pending",
+        "status": "sent",
         "channel": "sms",
         "content": content,
-        "sent": False,
+        "sent": True,
     }

@@ -8,7 +8,7 @@ import pytest
 
 from tour_follow_up import (
     TOUR_COMPLETED_EVENT,
-    assert_pending_draft_persist,
+    assert_sent_draft_persist,
     assert_valid_tour_follow_up_text,
     compose_tour_follow_up_sms,
     is_tour_completed_event,
@@ -20,14 +20,18 @@ from tour_follow_up import (
 SOURCE = Path(__file__).resolve().parents[1] / "tour_follow_up.py"
 
 
-def test_source_never_sends():
+def test_source_sends_and_never_parks_pending():
     text = SOURCE.read_text()
-    assert "send_sms" not in text
-    assert '"status": "sent"' not in text
+    assert "send_sms" in text
+    assert '"status": "sent"' in text
+    assert '"status": "pending"' not in text
+    assert "awaiting approval" not in text
+    assert "Never sent" not in text
+    assert "draft parked" not in text.lower()
+    assert "Park it" not in text
     assert '"status": "live"' not in text
     assert '"status": "booked"' not in text
     assert "Chippy" not in text
-    assert '"status": "pending"' in text
 
 
 def test_tour_completed_event():
@@ -84,14 +88,14 @@ def test_compose_is_an_ask_in_assigned_voice():
         assert word not in text.lower()
 
 
-def test_persist_must_stay_pending():
+def test_persist_must_be_sent():
     with pytest.raises(ValueError, match="pending"):
-        assert_pending_draft_persist({"status": "sent"})
-    with pytest.raises(ValueError, match="pending"):
-        assert_pending_draft_persist({"status": "live"})
-    with pytest.raises(ValueError, match="pending"):
-        assert_pending_draft_persist({"status": "booked"})
-    assert_pending_draft_persist({"status": "pending"})
+        assert_sent_draft_persist({"status": "pending"})
+    with pytest.raises(ValueError, match="must be sent"):
+        assert_sent_draft_persist({"status": "live"})
+    with pytest.raises(ValueError, match="must be sent"):
+        assert_sent_draft_persist({"status": "booked"})
+    assert_sent_draft_persist({"status": "sent"})
 
 
 def test_opening_prompt_names_the_follow_up_job():
@@ -99,7 +103,10 @@ def test_opening_prompt_names_the_follow_up_job():
         [{"event": "tour_completed", "contactId": "c1", "tourId": "t1"}]
     )
     assert block is not None
-    assert "Never send" in block
+    assert "Send one short SMS" in block
+    assert "Do not park a draft" in block
+    assert "Do not wait for approval" in block
+    assert "Never send" not in block
     assert "c1" in block
     assert tour_follow_up_instruction([{"event": "new_lead", "contactId": "c1"}]) is None
     assert is_tour_follow_up_draft(

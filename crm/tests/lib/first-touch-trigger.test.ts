@@ -27,14 +27,14 @@ beforeEach(() => {
   };
   draftFirstTouchForLead.mockReset();
   draftFirstTouchForLead.mockResolvedValue({
-    action: 'drafted',
+    action: 'sent',
     draftId: 'd1',
     contactId: 'c1',
     channel: 'sms',
-    status: 'pending',
+    status: 'sent',
     content: 'Hey Sam, this is Jordan. I can do Tue 11am or Wed 4pm — which works?',
     windows: ['Tue 11am', 'Wed 4pm'],
-    sent: false,
+    sent: true,
   });
 });
 
@@ -61,8 +61,8 @@ describe('fireAgentTrigger first-touch', () => {
     vi.stubGlobal('fetch', kvFetch());
     const result = await fireAgentTrigger({ spaceId: 's1', event: 'new_lead', contactId: 'c1' });
     expect(draftFirstTouchForLead).toHaveBeenCalledWith({ spaceId: 's1', contactId: 'c1' });
-    expect(result.firstTouch?.sent).toBe(false);
-    expect(result.firstTouch?.status).toBe('pending');
+    expect(result.firstTouch?.sent).toBe(true);
+    expect(result.firstTouch?.status).toBe('sent');
     expect(result.firstTouch?.content?.trim().length).toBeGreaterThan(0);
     expect(result.queued).toBe(true);
     expect(result.firedImmediately).toBe(true);
@@ -93,7 +93,7 @@ describe('fireAgentTrigger first-touch', () => {
     expect(draftFirstTouchForLead).toHaveBeenCalled();
     expect(result.queued).toBe(false);
     expect(result.reason).toBe('redis_not_configured');
-    expect(result.firstTouch?.status).toBe('pending');
-    expect(result.firstTouch?.sent).toBe(false);
+    expect(result.firstTouch?.status).toBe('sent');
+    expect(result.firstTouch?.sent).toBe(true);
   });
 });
