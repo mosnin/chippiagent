@@ -3,6 +3,11 @@ import { supabase } from '@/lib/supabase';
 import { getSpaceFromSlug } from '@/lib/space';
 import { ApplicationStatusClient } from './application-status-client';
 import { PublicPageMinimalShell } from '@/components/public-page-shell';
+import {
+  PORTAL_STATUS_CONTACT_COLUMNS,
+  PUBLIC_STATUS_CONTACT_COLUMNS,
+  toPublicStatusContact,
+} from './public-status-payload';
 
 // Disable caching so status updates show immediately
 export const dynamic = 'force-dynamic';
@@ -84,21 +89,25 @@ export default async function ApplicationStatusPage({
 
   const businessName = settings?.businessName || space.name;
 
-  // Build query — if token is provided, validate both ref AND token (portal mode)
-  let query = supabase
-    .from('Contact')
-    .select(
-      'id, name, email, applicationStatus, applicationStatusNote, applicationData, formConfigSnapshot, applicationRef, statusPortalToken, scoringStatus, createdAt',
-    )
-    .eq('applicationRef', ref)
-    .eq('spaceId', space.id);
-
-  // If token provided, enforce it must match (defense in depth)
-  if (token) {
-    query = query.eq('statusPortalToken', token);
-  }
-
-  const { data: contact } = await query.maybeSingle();
+  // Token-less confirmation links are still valid for a name+status view.
+  // Do not SELECT application answers unless the portal token is present —
+  // those fields must never enter the RSC payload on a public URL.
+  // Two queries (literal select strings) so supabase-js can type the row;
+  // a computed select string collapses to GenericStringError.
+  const { data: contact } = token
+    ? await supabase
+        .from('Contact')
+        .select(PORTAL_STATUS_CONTACT_COLUMNS)
+        .eq('applicationRef', ref)
+        .eq('spaceId', space.id)
+        .eq('statusPortalToken', token)
+        .maybeSingle()
+    : await supabase
+        .from('Contact')
+        .select(PUBLIC_STATUS_CONTACT_COLUMNS)
+        .eq('applicationRef', ref)
+        .eq('spaceId', space.id)
+        .maybeSingle();
 
   // Show a helpful, branded error page instead of generic 404
   if (!contact) {
@@ -111,8 +120,8 @@ export default async function ApplicationStatusPage({
     );
   }
 
-  // Determine if portal mode is enabled (token matches)
-  const portalMode = !!(token && contact.statusPortalToken === token);
+  // Token was already enforced in the query. A matching row means portal mode.
+  const portalMode = !!token;
 
   // Fetch status history and messages only in portal mode
   let statusHistory: {
@@ -180,15 +189,7 @@ export default async function ApplicationStatusPage({
       businessName={businessName}
     >
       <ApplicationStatusClient
-        contact={{
-          name: contact.name,
-          status: contact.applicationStatus ?? 'received',
-          statusNote: contact.applicationStatusNote,
-          applicationRef: contact.applicationRef ?? ref,
-          applicationData: contact.applicationData,
-          formConfigSnapshot: contact.formConfigSnapshot,
-          createdAt: contact.createdAt,
-        }}
+        contact={toPublicStatusContact(contact, portalMode, ref)}
         businessName={businessName}
         portalMode={portalMode}
         statusHistory={statusHistory}

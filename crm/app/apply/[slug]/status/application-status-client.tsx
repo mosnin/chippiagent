@@ -237,14 +237,15 @@ export function ApplicationStatusClient({
     }
   }, [messageText, token, sending, contact.applicationRef]);
 
-  // Application data display fields
+  // Application data display fields — portal token required. Ref-only
+  // confirmation links must never render (or hydrate) application answers.
   const appDisplayFields = useMemo(() => {
-    if (!contact.applicationData) return [];
+    if (!portalMode || !contact.applicationData) return [];
     return getSubmissionDisplay({
       applicationData: contact.applicationData,
       formConfigSnapshot: contact.formConfigSnapshot,
     });
-  }, [contact.applicationData, contact.formConfigSnapshot]);
+  }, [portalMode, contact.applicationData, contact.formConfigSnapshot]);
 
   // Group display fields by section
   const appSections = useMemo(() => {
