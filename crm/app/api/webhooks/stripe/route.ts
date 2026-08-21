@@ -265,14 +265,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid signature' }, { status: 400 });
   }
 
-  // Idempotency check — skip if already processed
+  // Idempotency: look up first, but do NOT mark processed until the
+  // handler succeeds. Marking before process meant a mid-handler 500
+  // left Stripe's retry seeing "already processed" and dropping the
+  // real billing event (paid / canceled / past_due never applied).
   const eventKey = `stripe:event:${event.id}`;
   try {
     const alreadyProcessed = await redis.get(eventKey);
     if (alreadyProcessed) {
       return NextResponse.json({ received: true });
     }
-    await redis.set(eventKey, '1', { ex: 86400 }); // Expire after 24h
   } catch {
     // Redis unavailable — proceed anyway (best effort dedup)
   }
@@ -525,6 +527,12 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     logger.error('[stripe-webhook] error processing event', { eventType: event.type }, err);
     return NextResponse.json({ error: 'Webhook handler failed' }, { status: 500 });
+  }
+
+  try {
+    await redis.set(eventKey, '1', { ex: 86400 }); // Expire after 24h
+  } catch {
+    // Redis unavailable — Stripe retries re-run idempotent status updates
   }
 
   return NextResponse.json({ received: true });
