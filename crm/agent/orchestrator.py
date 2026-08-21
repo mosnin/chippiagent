@@ -38,6 +38,12 @@ from schemas import AgentSettings, Space
 from security.budget import acquire_run_lock, check_budget, record_usage, release_run_lock
 from security.context import AgentContext
 from chippi import load_ai_profile, make_chippi_agent
+from first_touch import ensure_first_touch_draft, first_touch_instruction, is_inbound_lead_event
+from first_touch_reply import (
+    ensure_first_touch_reply_draft,
+    first_touch_reply_instruction,
+    is_inbound_message_event,
+)
 from llm import extract_usage, fallback_models, resolve_chat_model
 from tools.streaming import publish_event
 from tools.base import result_is_ok
@@ -334,11 +340,17 @@ def _build_opening_prompt(
             if t.get("dealId"):
                 parts.append(f"dealId: {t['dealId']}")
             lines.append("  ".join(parts))
+        first_touch_block = first_touch_instruction(triggers)
+        first_touch_reply_block = first_touch_reply_instruction(triggers)
         triggers_block = (
             "Active triggers (act on each one):\n" + "\n".join(lines)
             if lines
             else "Sweep mode — look for stale leads, stalled deals, and deals closing soon."
         )
+        if first_touch_block:
+            triggers_block = f"{first_touch_block}\n\n{triggers_block}"
+        if first_touch_reply_block:
+            triggers_block = f"{first_touch_reply_block}\n\n{triggers_block}"
     else:
         triggers_block = (
             "Sweep mode — no specific trigger fired. Look for stale leads "
@@ -456,6 +468,43 @@ async def _run_locked(
     triggers = [] if instruction else await pop_triggers(space.id)
     if triggers:
         log.info("triggers_found", count=len(triggers), events=[t.get("event") for t in triggers])
+        for trigger in triggers:
+            if is_inbound_lead_event(trigger.get("event")) and trigger.get("contactId"):
+                try:
+                    ft = await ensure_first_touch_draft(space.id, trigger["contactId"])
+                    log.info(
+                        "first_touch_ensured",
+                        contact_id=trigger["contactId"],
+                        action=ft.get("action"),
+                        sent=ft.get("sent"),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log.warning(
+                        "first_touch_failed",
+                        contact_id=trigger.get("contactId"),
+                        error=str(exc)[:200],
+                    )
+            if is_inbound_message_event(trigger.get("event")) and trigger.get("contactId"):
+                try:
+                    reply = await ensure_first_touch_reply_draft(
+                        space.id,
+                        trigger["contactId"],
+                        reply_text=trigger.get("content"),
+                        source_draft_id=trigger.get("sourceDraftId"),
+                        channel=trigger.get("channel"),
+                    )
+                    log.info(
+                        "first_touch_reply_ensured",
+                        contact_id=trigger["contactId"],
+                        action=reply.get("action"),
+                        sent=reply.get("sent"),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log.warning(
+                        "first_touch_reply_failed",
+                        contact_id=trigger.get("contactId"),
+                        error=str(exc)[:200],
+                    )
 
     log.info("agent_run_started", trigger_count=len(triggers), routine=bool(instruction))
     await publish_event(

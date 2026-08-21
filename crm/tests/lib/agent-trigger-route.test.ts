@@ -2,6 +2,21 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('@/lib/api-auth', () => ({ requireAuth: vi.fn(async () => ({ userId: 'u_1' })) }));
 vi.mock('@/lib/space', () => ({ getSpaceForUser: vi.fn(async () => ({ id: 'space_1' })) }));
+vi.mock('@/lib/agent/first-touch', () => ({
+  draftFirstTouchForLead: vi.fn(async () => ({
+    action: 'drafted',
+    draftId: 'd1',
+    contactId: 'c1',
+    channel: 'sms',
+    status: 'pending',
+    content: 'Hey Sam, this is Jordan. I can do Tue 11am or Wed 4pm — which works?',
+    windows: ['Tue 11am', 'Wed 4pm'],
+    sent: false,
+  })),
+}));
+vi.mock('@/lib/agent/first-touch-reply', () => ({
+  draftFirstTouchReplyForLead: vi.fn(),
+}));
 
 describe('POST /api/agent/trigger', () => {
   const OLD_ENV = { ...process.env };

@@ -117,6 +117,9 @@ export async function POST(req: NextRequest) {
       spaceId,
       event: 'inbound_message',
       contactId,
+      content,
+      channel,
+      sourceDraftId: draftId,
     });
   } catch (e) {
     console.error('[agent/inbound] agent trigger failed (non-fatal):', e);
