@@ -9,8 +9,9 @@ import { getSpaceForUser, getSpaceFromSlug } from '@/lib/space';
  * Lightweight card payload for the inline expandable contact card in the
  * Chippi chat. Returns only what the card renders — no dead weight.
  *
- * Auth: Clerk session. Space resolved via slug query param (from URL) or
- * via the authenticated user's own space when slug is absent.
+ * Auth: Clerk session. Space is always the caller's own workspace.
+ * `slug` is accepted for back-compat with the chat card fetch, but it is
+ * never an authorization source — a foreign slug is 403.
  */
 export async function GET(
   req: NextRequest,
@@ -23,11 +24,19 @@ export async function GET(
   const { id } = await params;
   const slug = req.nextUrl.searchParams.get('slug');
 
-  const space = slug
-    ? await getSpaceFromSlug(slug)
-    : await getSpaceForUser(userId);
+  // Derive space from the authenticated user, never from the slug. The
+  // previous path trusted `?slug=` as the tenant key, so any logged-in
+  // realtor who knew another space's public apply slug + a contact id
+  // could read that contact's email, phone, notes, and score.
+  const space = await getSpaceForUser(userId);
+  if (!space) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
-  if (!space) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (slug) {
+    const requested = await getSpaceFromSlug(slug);
+    if (!requested || requested.id !== space.id) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+  }
 
   const { data: contact, error: contactError } = await supabase
     .from('Contact')
