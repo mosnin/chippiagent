@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { requireSpaceOwner } from '@/lib/api-auth';
+import { resolveOrCreateTourContact } from '@/lib/tour-contact';
 
 /**
  * Convert a completed tour into a deal.
@@ -51,34 +52,30 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'No deal stages configured. Create a deal stage first.' }, { status: 400 });
   }
 
-  // Create or find linked contact
-  let contactId = tour.contactId;
-  if (!contactId) {
-    // Try to find by email
-    const { data: contactRow } = await supabase
+  // Create or find linked contact — same escaped-email resolver as /book.
+  // Raw ilike here would convert the tour onto the wrong person's deal.
+  let contactId = tour.contactId as string | null;
+  if (contactId) {
+    const { data: linked, error: linkedErr } = await supabase
       .from('Contact')
       .select('id')
+      .eq('id', contactId)
       .eq('spaceId', space.id)
-      .ilike('email', tour.guestEmail)
       .maybeSingle();
-
-    if (contactRow) {
-      contactId = contactRow.id;
-    } else {
-      // Create a new contact
-      const newContactId = crypto.randomUUID();
-      const { error: contactErr } = await supabase.from('Contact').insert({
-        id: newContactId,
-        spaceId: space.id,
-        name: tour.guestName,
-        email: tour.guestEmail,
-        phone: tour.guestPhone || null,
-        type: 'TOUR',
-        tags: ['from-tour'],
-        scoringStatus: 'unscored',
-      });
-      if (!contactErr) contactId = newContactId;
+    if (linkedErr) throw linkedErr;
+    if (!linked) {
+      contactId = null;
     }
+  }
+  if (!contactId) {
+    contactId = await resolveOrCreateTourContact({
+      spaceId: space.id,
+      name: tour.guestName,
+      email: tour.guestEmail,
+      phone: tour.guestPhone,
+      sourceLabel: 'from-tour',
+      tags: ['from-tour'],
+    });
   }
 
   // Determine the next position in the first stage
