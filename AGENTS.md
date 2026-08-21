@@ -10,7 +10,7 @@ Read this file before touching any code. If you only need to work inside `crm/`,
 
 Chippi is an **agentic operating system for U.S. real estate agents and brokerages.**
 
-A realtor's book of business — contacts, leads, deals, tours, properties, applications — is the workspace. Chippi is an autonomous AI agent that works *inside* that workspace on the realtor's behalf: it qualifies inbound leads, drafts and sends follow-up, schedules tours, advances deals, produces marketing content, and surfaces what needs attention — taking sign-off only where a human decision is genuinely required.
+A realtor's book of business — contacts, leads, deals, tours, properties, applications — is the workspace. Chippi is an autonomous AI agent that works *inside* that workspace on the realtor's behalf: it qualifies inbound leads, drafts and sends follow-up, schedules tours, advances deals, produces marketing content, and surfaces what needs attention.
 
 **The product is the agent.** The CRM-style data structures underneath it — contacts, deals, pipelines — are *substrate, not the product*. Chippi is not a database the realtor maintains; it is an operator that maintains it for them. It runs two ways:
 
@@ -373,7 +373,7 @@ Plugins MUST NOT modify core files (`run_agent.py`, `cli.py`, `gateway/run.py`, 
 
 ### Stack
 
-Next.js 15 (App Router), React 19, TypeScript, Tailwind 4, Supabase (PostgreSQL via `@supabase/supabase-js` with the service-role key — schema in `supabase/schema.sql`), Clerk (auth), OpenAI (scoring + embeddings + assistant), Supabase pgvector (vector search via `DocumentEmbedding` table and `match_documents` RPC — see `lib/zilliz.ts`), Upstash Redis (legacy metadata + rate limiting + pending-approval state), Resend (email), Telnyx (SMS), Stripe (billing), Vercel (deployment).
+Next.js 15 (App Router), React 19, TypeScript, Tailwind 4, Supabase (PostgreSQL via `@supabase/supabase-js` with the service-role key — schema in `supabase/schema.sql`), Clerk (auth), OpenAI (scoring + embeddings + assistant), Supabase pgvector (vector search via `DocumentEmbedding` table and `match_documents` RPC — see `lib/zilliz.ts`), Upstash Redis (legacy metadata + rate limiting), Resend (email), Telnyx (SMS), Stripe (billing), Vercel (deployment).
 
 Prisma is **not** in use — no `prisma/schema.prisma`, no `prisma.config.ts`, and `@prisma/client` is not imported anywhere.
 
@@ -403,7 +403,7 @@ Do NOT modify without explicit instruction:
 10. Deployment configuration — `next.config.ts`, `package.json` scripts, `scripts/*`
 11. Core routing and middleware — `middleware.ts`, route matchers, redirect logic
 12. Environment variable handling — `lib/utils.ts` (protocol/domain), `lib/supabase.ts`, `lib/redis.ts`
-13. AI tool registry — `lib/ai-tools/tools/index.ts`, `lib/ai-tools/registry.ts`, each `lib/ai-tools/tools/*.ts` (each ships its own `requiresApproval` + `rateLimit` contract)
+13. AI tool registry — `lib/ai-tools/tools/index.ts`, `lib/ai-tools/registry.ts`, each `lib/ai-tools/tools/*.ts` (each ships its own `rateLimit` contract)
 14. Broker permission helpers — `lib/permissions.ts` and `lib/api-auth.ts`. Never bypass these with raw `auth()` or ad-hoc role checks.
 
 ### Additional CRM references

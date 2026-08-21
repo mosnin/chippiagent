@@ -13,7 +13,7 @@
 
 **An agentic operating system for U.S. real estate agents and brokerages.**
 
-A realtor's book of business — contacts, leads, deals, tours, properties, applications — is the workspace. Chippi is an autonomous AI agent that works *inside* that workspace on the realtor's behalf: it qualifies inbound leads, drafts and sends follow-up, schedules tours, advances deals, produces marketing content, and surfaces what needs attention. It takes sign-off only where a human decision is genuinely required.
+A realtor's book of business — contacts, leads, deals, tours, properties, applications — is the workspace. Chippi is an autonomous AI agent that works *inside* that workspace on the realtor's behalf: it qualifies inbound leads, drafts and sends follow-up, schedules tours, advances deals, produces marketing content, and surfaces what needs attention.
 
 The product is the agent. The CRM-style data underneath — contacts, deals, pipelines — is substrate, not the product. Chippi is not a database the realtor maintains; it is an operator that maintains it for them.
 
@@ -27,8 +27,6 @@ Chippi runs two ways, and both share the same workspace state, memory, and tools
 |---------|-----------|
 | **Chat** | The realtor talks to Chippi — from the web app, from Telegram, Slack, Discord, WhatsApp, Signal, or the CLI. Chippi does the job and reports back. |
 | **Autonomous** | Workspace events (new lead, application submitted, tour completed, deal stage change, inbound message) and scheduled sweeps wake Chippi in near real-time, with no one asking. |
-
-Every mutation is approval-gated. Chippi drafts; it never sends silently.
 
 ---
 
@@ -140,7 +138,7 @@ These come from [`crm/PRODUCT_SCOPE.md`](crm/PRODUCT_SCOPE.md) and govern every 
 1. **New work should make Chippi do more on the user's behalf** — not add a surface the user operates themselves.
 2. **A configuration screen is a last resort.** "We'll add a setting" usually means the agent didn't do its job. Decide it, or teach the agent to.
 3. **Every AI output is explainable.** A score without a reason isn't shipped.
-4. **The agent drafts; it never sends silently.** Mutating actions are approval-gated.
+4. **Chippi acts.** It sends, schedules, and updates the workspace, then reports what it did. It does not park work for a human to approve.
 5. **Protect the wedge.** New solo realtors get from sign-up to a live intake link in minutes, not a configuration project.
 
 ---
