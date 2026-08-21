@@ -17,6 +17,9 @@ vi.mock('@/lib/agent/first-touch', () => ({
 vi.mock('@/lib/agent/first-touch-reply', () => ({
   draftFirstTouchReplyForLead: vi.fn(),
 }));
+vi.mock('@/lib/agent/tour-follow-up', () => ({
+  draftTourFollowUpForContact: vi.fn(),
+}));
 
 describe('POST /api/agent/trigger', () => {
   const OLD_ENV = { ...process.env };

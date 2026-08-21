@@ -2,8 +2,10 @@ import { describe, expect, it, vi, afterEach } from 'vitest';
 import {
   INBOUND_LEAD_EVENTS,
   INBOUND_MESSAGE_EVENT,
+  TOUR_COMPLETED_EVENT,
   isInboundLeadEvent,
   isInboundMessageEvent,
+  isTourCompletedEvent,
   parseImmediateEvents,
 } from '@/lib/agent/trigger-policy';
 
@@ -65,6 +67,14 @@ describe('parseImmediateEvents', () => {
     expect(INBOUND_MESSAGE_EVENT).toBe('inbound_message');
     expect(isInboundMessageEvent('inbound_message')).toBe(true);
     expect(isInboundMessageEvent('new_lead')).toBe(false);
+  });
+
+  it('treats tour_completed as the tour-follow-up event', () => {
+    expect(TOUR_COMPLETED_EVENT).toBe('tour_completed');
+    expect(isTourCompletedEvent('tour_completed')).toBe(true);
+    expect(isTourCompletedEvent('new_lead')).toBe(false);
+    expect(isTourCompletedEvent('deal_stage_changed')).toBe(false);
+    expect(isTourCompletedEvent('goal_completed')).toBe(false);
   });
 
   it('warns once per repeated invalid config value', () => {

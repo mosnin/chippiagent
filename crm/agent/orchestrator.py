@@ -44,6 +44,11 @@ from first_touch_reply import (
     first_touch_reply_instruction,
     is_inbound_message_event,
 )
+from tour_follow_up import (
+    ensure_tour_follow_up_draft,
+    is_tour_completed_event,
+    tour_follow_up_instruction,
+)
 from llm import extract_usage, fallback_models, resolve_chat_model
 from tools.streaming import publish_event
 from tools.base import result_is_ok
@@ -342,6 +347,7 @@ def _build_opening_prompt(
             lines.append("  ".join(parts))
         first_touch_block = first_touch_instruction(triggers)
         first_touch_reply_block = first_touch_reply_instruction(triggers)
+        tour_follow_up_block = tour_follow_up_instruction(triggers)
         triggers_block = (
             "Active triggers (act on each one):\n" + "\n".join(lines)
             if lines
@@ -351,6 +357,8 @@ def _build_opening_prompt(
             triggers_block = f"{first_touch_block}\n\n{triggers_block}"
         if first_touch_reply_block:
             triggers_block = f"{first_touch_reply_block}\n\n{triggers_block}"
+        if tour_follow_up_block:
+            triggers_block = f"{tour_follow_up_block}\n\n{triggers_block}"
     else:
         triggers_block = (
             "Sweep mode — no specific trigger fired. Look for stale leads "
@@ -502,6 +510,25 @@ async def _run_locked(
                 except Exception as exc:  # noqa: BLE001
                     log.warning(
                         "first_touch_reply_failed",
+                        contact_id=trigger.get("contactId"),
+                        error=str(exc)[:200],
+                    )
+            if is_tour_completed_event(trigger.get("event")) and trigger.get("contactId"):
+                try:
+                    follow = await ensure_tour_follow_up_draft(
+                        space.id,
+                        trigger["contactId"],
+                        tour_id=trigger.get("tourId"),
+                    )
+                    log.info(
+                        "tour_follow_up_ensured",
+                        contact_id=trigger["contactId"],
+                        action=follow.get("action"),
+                        sent=follow.get("sent"),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log.warning(
+                        "tour_follow_up_failed",
                         contact_id=trigger.get("contactId"),
                         error=str(exc)[:200],
                     )
