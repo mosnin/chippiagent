@@ -136,6 +136,22 @@ describe('executeTool', () => {
     expect(out.error?.message).toMatch(/database offline/);
   });
 
+  it('returns ok:false when the handler reports display:"error" so callers cannot swallow a failed send', async () => {
+    currentTool = defineTool({
+      name: 'send_thing',
+      description: 't',
+      parameters: z.object({}),
+      requiresApproval: false,
+      handler: async () => ({ summary: 'SMS send failed for +1555.', display: 'error' as const }),
+    });
+    const out = await executeTool('send_thing', {}, makeCtx());
+    expect(out.ok).toBe(false);
+    expect(out.error?.code).toBe('handler_error');
+    expect(out.error?.message).toMatch(/SMS send failed/);
+    expect(out.result?.display).toBe('error');
+    expect(executionToModelMessage(out)).toMatch(/^ERROR \(handler_error\):/);
+  });
+
   it('returns ok with the ToolResult on success and passes through validated args', async () => {
     currentTool = defineTool({
       name: 'greet',

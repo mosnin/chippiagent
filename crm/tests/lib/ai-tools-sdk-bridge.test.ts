@@ -9,11 +9,17 @@
  * an `invoke(runCtx, jsonString)` method on the resulting tool.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { z } from 'zod';
 import { Agent, RunContext, RunState } from '@openai/agents';
 import { defineTool } from '@/lib/ai-tools/types';
 import type { ToolContext } from '@/lib/ai-tools/types';
+
+let rateLimitAllowed = true;
+vi.mock('@/lib/rate-limit', () => ({
+  checkRateLimit: vi.fn(async () => ({ allowed: rateLimitAllowed, remaining: 0, resetAt: 0 })),
+}));
+
 import {
   toSdkTool,
   summariseInterruption,
@@ -32,6 +38,10 @@ function makeCtx(): ToolContext {
 }
 
 describe('toSdkTool', () => {
+  beforeEach(() => {
+    rateLimitAllowed = true;
+  });
+
   it('maps name, description, and zod parameters straight through', () => {
     const def = defineTool({
       name: 'find_widget',
@@ -150,6 +160,50 @@ describe('toSdkTool', () => {
     const out = await sdk.invoke(new RunContext(), JSON.stringify({}));
 
     expect(out).toBe('Error: flaky_op failed — Connection refused');
+  });
+
+  it('re-validates args against the original zod schema so relaxed strict-mode input cannot skip constraints', async () => {
+    const handler = vi.fn(async () => ({ summary: 'should not run' }));
+    const def = defineTool({
+      name: 'send_note',
+      description: 'send',
+      parameters: z.object({
+        toEmail: z.string().email(),
+        body: z.string().min(1),
+      }),
+      requiresApproval: false,
+      handler,
+    });
+
+    const sdk = toSdkTool(def, makeCtx());
+    const out = await sdk.invoke(
+      new RunContext(),
+      JSON.stringify({ toEmail: 'not-an-email', body: 'hi' }),
+    );
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(out).toMatch(/^Error: /);
+    expect(out).toMatch(/toEmail|email/i);
+  });
+
+  it('enforces the tool rate limit on the SDK execute path', async () => {
+    const handler = vi.fn(async () => ({ summary: 'sent' }));
+    const def = defineTool({
+      name: 'blast',
+      description: 'blast',
+      parameters: z.object({}),
+      requiresApproval: false,
+      rateLimit: { max: 1, windowSeconds: 3600 },
+      handler,
+    });
+    rateLimitAllowed = false;
+
+    const sdk = toSdkTool(def, makeCtx());
+    const out = await sdk.invoke(new RunContext(), JSON.stringify({}));
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(out).toMatch(/^Error: /);
+    expect(out).toMatch(/Rate limit/);
   });
 
   it('catches non-Error throws (e.g. a plain string) without crashing the run', async () => {
@@ -332,7 +386,7 @@ describe('toSdkTool — strict-mode schema rewriting', () => {
     expect(required.sort()).toEqual(['limit', 'query']);
   });
 
-  it('handler still receives null for fields the model passes as null (handlers use ?? defaults — null and undefined both fall through)', async () => {
+  it('handler runs when the model passes null for an optional field (null coerced to undefined; ?? defaults still apply)', async () => {
     const handler = vi.fn(async () => ({ summary: 'ok' }));
     const def = defineTool({
       name: 'noop',
@@ -345,8 +399,11 @@ describe('toSdkTool — strict-mode schema rewriting', () => {
     });
 
     const sdk = toSdkTool(def, makeCtx());
-    await sdk.invoke(new RunContext(), JSON.stringify({ query: null }));
-    expect(handler).toHaveBeenCalledWith({ query: null }, expect.anything());
+    const out = await sdk.invoke(new RunContext(), JSON.stringify({ query: null }));
+    expect(out).toBe('ok');
+    expect(handler).toHaveBeenCalledTimes(1);
+    const args = handler.mock.calls[0][0] as { query?: string };
+    expect(args.query ?? 'fallback').toBe('fallback');
   });
 
   it('handler receives string when the model provides one', async () => {

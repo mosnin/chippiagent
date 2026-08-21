@@ -47,6 +47,31 @@ export interface ToolExecution {
   error?: ToolExecutionError;
 }
 
+function abortedBeforeRun(name: string): ToolExecution {
+  return {
+    ok: false,
+    name,
+    error: { code: 'aborted', message: 'Turn was cancelled before tool could run.' },
+  };
+}
+
+/**
+ * Run an already-resolved tool (zod parse → rate limit → handler).
+ *
+ * Used by `toSdkTool` so the TS chat path cannot skip the original schema
+ * or the per-tool rate limit — the SDK only validates the relaxed
+ * strict-mode schema. Lookup stays in `executeTool` so a hallucinated
+ * name still fails closed as `unknown_tool`.
+ */
+export async function executeResolvedTool(
+  tool: ToolDefinition<unknown, unknown>,
+  rawArgs: unknown,
+  ctx: ToolContext,
+): Promise<ToolExecution> {
+  if (ctx.signal.aborted) return abortedBeforeRun(tool.name);
+  return runValidatedTool(tool, rawArgs, ctx, tool.name);
+}
+
 /**
  * Execute a tool call end-to-end.
  *
@@ -63,11 +88,7 @@ export async function executeTool(
 ): Promise<ToolExecution> {
   // 1. Early abort check — if the user already cancelled, don't start.
   if (ctx.signal.aborted) {
-    return {
-      ok: false,
-      name,
-      error: { code: 'aborted', message: 'Turn was cancelled before tool could run.' },
-    };
+    return abortedBeforeRun(name);
   }
 
   // 2. Look up the tool. Model hallucinations land here.
@@ -84,9 +105,37 @@ export async function executeTool(
     };
   }
 
+  return runValidatedTool(tool, rawArgs, ctx, name);
+}
+
+/**
+ * Strict-mode JSON schema requires every property. The SDK therefore
+ * sends `null` for unused optional fields. Original zod `.optional()`
+ * rejects `null`, so we coerce `null` → `undefined` before parse.
+ * Non-null values still hit `.email()` / `.min()` / etc.
+ */
+function nullsToUndefined(value: unknown): unknown {
+  if (value === null) return undefined;
+  if (Array.isArray(value)) return value.map(nullsToUndefined);
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      out[key] = nullsToUndefined(child);
+    }
+    return out;
+  }
+  return value;
+}
+
+async function runValidatedTool(
+  tool: ToolDefinition<unknown, unknown>,
+  rawArgs: unknown,
+  ctx: ToolContext,
+  name: string,
+): Promise<ToolExecution> {
   // 3. Validate args. Prefer structured zod issues so the model can
   //    self-correct precisely ("expected number, got string at .limit").
-  const parsed = tool.parameters.safeParse(rawArgs);
+  const parsed = tool.parameters.safeParse(nullsToUndefined(rawArgs));
   if (!parsed.success) {
     const issueSummary = parsed.error.issues
       .slice(0, 6)
@@ -161,6 +210,30 @@ export async function executeTool(
         name,
         args: parsed.data,
         error: { code: 'aborted', message: 'Turn was cancelled while the tool was running.' },
+      };
+    }
+
+    // Handlers signal failure with `display: 'error'` instead of throwing
+    // (send_sms when Telnyx returns false, send_email when delivery
+    // fails, missing rows, …). Treating that as `ok: true` swallows the
+    // failure — post-tour execute and any other exec.ok caller report a
+    // successful send that never happened.
+    if (result.display === 'error') {
+      logger.info('[tools.usage]', {
+        tool: tool.name,
+        userId: ctx.userId,
+        spaceId: ctx.space.id,
+        ok: false,
+        errorCode: 'handler_error',
+        display: result.display,
+        durationMs: Date.now() - startedAt,
+      });
+      return {
+        ok: false,
+        name,
+        args: parsed.data,
+        result,
+        error: { code: 'handler_error', message: result.summary },
       };
     }
 
