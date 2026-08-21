@@ -3,8 +3,8 @@
  * /chippi home action sheet.
  *
  * Two modes share the route: 'preview' (call OpenAI, return composed
- * subject+body) and 'send' (insert AgentDraft, call sendDraft, flip
- * status). Tests cover the mode dispatch, the contract shape, error
+ * subject+body) and 'send' (call sendDraft, insert a terminal AgentDraft).
+ * Tests cover the mode dispatch, the contract shape, error
  * paths the UI actually handles, and the boundary between deal context
  * (looks up Deal → contactId) and person context (looks up Contact).
  */
@@ -279,7 +279,7 @@ describe('POST /api/agent/quick-draft — voice wiring', () => {
 });
 
 describe('POST /api/agent/quick-draft — send mode', () => {
-  it('inserts a pending AgentDraft, fires sendDraft, flips status to sent', async () => {
+  it('sends first, then inserts a sent AgentDraft — never pending', async () => {
     mockByTable.Deal = { single: { id: 'd_chen', title: 'Chen', contactId: 'c_chen', updatedAt: null } };
     mockByTable.AgentDraft = { insertResult: { id: 'draft_quick' } };
     mockByTable.Contact = { single: { name: 'David Chen', email: 'david@example.com', phone: null } };
@@ -306,14 +306,16 @@ describe('POST /api/agent/quick-draft — send mode', () => {
       contactId: 'c_chen',
       dealId: 'd_chen',
       channel: 'email',
-      status: 'pending',
+      status: 'sent',
+      feedback_action: 'approved',
       subject: 'Quick check-in',
     });
+    expect(lastInsertedDraft?.status).not.toBe('pending');
     expect(sendDraftMock).toHaveBeenCalledOnce();
-    expect(lastDraftStatusUpdate).toMatchObject({ status: 'sent' });
+    expect(lastDraftStatusUpdate).toBeNull();
   });
 
-  it('marks the draft approved (not sent) when delivery is unconfigured', async () => {
+  it('returns 502 and records a failed row when delivery is unconfigured', async () => {
     sendDraftMock.mockResolvedValueOnce({ sent: false, error: 'not_configured' } as never);
     mockByTable.Deal = { single: { id: 'd_chen', title: 'Chen', contactId: 'c_chen', updatedAt: null } };
     mockByTable.AgentDraft = { insertResult: { id: 'draft_unconf' } };
@@ -330,9 +332,17 @@ describe('POST /api/agent/quick-draft — send mode', () => {
         body: 'b',
       }) as never,
     );
+    expect(res.status).toBe(502);
     const body = await res.json();
     expect(body.status).toBe('approved');
+    expect(body.error).toBe('not_configured');
     expect(body.deliveryResult.sent).toBe(false);
+    expect(lastInsertedDraft).toMatchObject({
+      status: 'approved',
+      feedback_action: 'rejected',
+      outcome_signal: 'failed',
+    });
+    expect(lastInsertedDraft?.status).not.toBe('pending');
   });
 
   it('rejects send with empty body', async () => {

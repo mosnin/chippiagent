@@ -127,6 +127,9 @@ describe('GET /api/agent/draft-stats', () => {
     expect(body).toEqual({
       windowDays: 30,
       total: 0,
+      sent: 0,
+      failed: 0,
+      sentRate: 0,
       approved: 0,
       editedAndApproved: 0,
       rejected: 0,
@@ -164,6 +167,9 @@ describe('GET /api/agent/draft-stats', () => {
     expect(body).toEqual({
       windowDays: 30,
       total: 9,
+      sent: 8,
+      failed: 1,
+      sentRate: 0.89,
       approved: 5,
       editedAndApproved: 3,
       rejected: 1,
@@ -200,16 +206,19 @@ describe('GET /api/agent/draft-stats', () => {
     expect(body.medianDecisionMs).toBe(2500);
     expect(body.editedAndApproved).toBe(4);
     expect(body.total).toBe(4);
-    // Everyone went out → approvalRate = 1.
+    // Everyone went out → sentRate = 1.
+    expect(body.sentRate).toBe(1);
     expect(body.approvalRate).toBe(1);
+    expect(body.sent).toBe(4);
+    expect(body.failed).toBe(0);
   });
 
-  it('held drafts count toward the total but not the approval rate', async () => {
+  it('held leftovers are not waiting-for-approval and do not count in total', async () => {
     supabaseTerminal = {
       data: [
-        { feedback_action: 'approved', edit_distance: 0, decision_ms: 5000 },
-        { feedback_action: 'held', edit_distance: null, decision_ms: 8000 },
-        { feedback_action: 'held', edit_distance: null, decision_ms: 12000 },
+        { feedback_action: 'approved', edit_distance: 0, decision_ms: 5000, status: 'sent' },
+        { feedback_action: 'held', edit_distance: null, decision_ms: 8000, status: 'pending' },
+        { feedback_action: 'held', edit_distance: null, decision_ms: 12000, status: 'pending' },
       ],
     };
 
@@ -217,16 +226,35 @@ describe('GET /api/agent/draft-stats', () => {
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(body.total).toBe(3);
+    expect(body.total).toBe(1);
+    expect(body.sent).toBe(1);
+    expect(body.failed).toBe(0);
     expect(body.approved).toBe(1);
     expect(body.held).toBe(2);
-    // 1 of 3 went out → 0.33.
-    expect(body.approvalRate).toBe(0.33);
+    expect(body.sentRate).toBe(1);
+    expect(body.approvalRate).toBe(1);
     expect(body.editedRate).toBe(0);
-    // No edited drafts → median edit distance is null, not 0.
     expect(body.medianEditDistance).toBeNull();
-    // Decision_ms still recorded for held drafts → median across all three.
+    // Decision_ms still recorded for leftover held rows → median across all three.
     expect(body.medianDecisionMs).toBe(8000);
+  });
+
+  it('failed sends (outcome_signal=failed or feedback_action=rejected) count as failed', async () => {
+    supabaseTerminal = {
+      data: [
+        { feedback_action: 'approved', edit_distance: 0, decision_ms: 1000, status: 'sent', outcome_signal: null },
+        { feedback_action: 'rejected', edit_distance: 0, decision_ms: 2000, status: 'approved', outcome_signal: 'failed' },
+      ],
+    };
+
+    const res = await GET();
+    const body = await res.json();
+
+    expect(body.total).toBe(2);
+    expect(body.sent).toBe(1);
+    expect(body.failed).toBe(1);
+    expect(body.sentRate).toBe(0.5);
+    expect(body.outcomeCheckedCount).toBe(0);
   });
 
   it('applies the correct DB filters: spaceId, feedback_action not null, 30-day window', async () => {
@@ -272,6 +300,7 @@ describe('GET /api/agent/draft-stats', () => {
     const selectArg = selectCalls[0][1][0] as string;
     expect(selectArg).toContain('outcome_signal');
     expect(selectArg).toContain('feedback_action');
+    expect(selectArg).toContain('status');
   });
 
   it('outcome attribution: 2 advanced + 3 none + 1 unchecked → rate over checked only', async () => {
@@ -355,6 +384,9 @@ describe('aggregateDraftStats (helper)', () => {
     expect(stats).toEqual({
       windowDays: 30,
       total: 0,
+      sent: 0,
+      failed: 0,
+      sentRate: 0,
       approved: 0,
       editedAndApproved: 0,
       rejected: 0,
@@ -379,10 +411,13 @@ describe('aggregateDraftStats (helper)', () => {
     ];
     const stats = aggregateDraftStats(rows);
     expect(stats.total).toBe(4);
+    expect(stats.sent).toBe(3);
+    expect(stats.failed).toBe(1);
     expect(stats.approved).toBe(2);
     expect(stats.editedAndApproved).toBe(1);
     expect(stats.rejected).toBe(1);
     // 3 of 4 went out → 0.75.
+    expect(stats.sentRate).toBe(0.75);
     expect(stats.approvalRate).toBe(0.75);
     expect(stats.outcomeCheckedCount).toBe(3);
     // 2 of 3 advanced → 0.67.
