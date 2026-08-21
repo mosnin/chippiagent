@@ -24,6 +24,7 @@ import hashlib
 import hmac
 import logging
 import os
+import re
 import urllib.parse
 from typing import Any, Dict, Optional
 
@@ -42,6 +43,50 @@ TWILIO_API_BASE = "https://api.twilio.com/2010-04-01/Accounts"
 MAX_SMS_LENGTH = 1600  # ~10 SMS segments
 DEFAULT_WEBHOOK_PORT = 8080
 DEFAULT_WEBHOOK_HOST = "127.0.0.1"
+_E164_RE = re.compile(r"^\+\d{10,15}$")
+_TWILIO_FAILED_STATUSES = frozenset({"failed", "undelivered", "canceled"})
+
+
+def to_e164(raw: str) -> str | None:
+    """Canonicalize a destination to E.164, or None if it is not sendable.
+
+    US numbers are commonly stored as 10 digits or as 11 digits starting
+    with ``1`` and no plus. Prefixing ``+1`` onto the 11-digit form produces
+    ``+1`` + ``1XXXXXXXXXX`` and the message goes to the wrong number.
+    International numbers without a leading ``+`` are refused — guessing a
+    country code is worse than failing closed.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return None
+    has_plus = text.startswith("+")
+    digits = re.sub(r"\D", "", text)
+    if len(digits) < 10 or len(digits) > 15:
+        return None
+    if has_plus:
+        e164 = f"+{digits}"
+    elif len(digits) == 10:
+        e164 = f"+1{digits}"
+    elif len(digits) == 11 and digits.startswith("1"):
+        e164 = f"+{digits}"
+    else:
+        return None
+    return e164 if _E164_RE.match(e164) else None
+
+
+def twilio_accepted_send(body: Any) -> bool:
+    """True only when Twilio created a message (sid present, not already failed)."""
+    if not isinstance(body, dict):
+        return False
+    sid = body.get("sid") or ""
+    if not isinstance(sid, str) or not sid:
+        return False
+    if body.get("error_code"):
+        return False
+    status = str(body.get("status") or "").lower()
+    if status in _TWILIO_FAILED_STATUSES:
+        return False
+    return True
 
 
 def check_sms_requirements() -> bool:
@@ -159,9 +204,17 @@ class SmsAdapter(BasePlatformAdapter):
     ) -> SendResult:
         import aiohttp
 
+        to_number = to_e164(chat_id)
+        if not to_number:
+            logger.error(
+                "[sms] send refused — To is not a valid E.164 number: %s",
+                redact_phone(chat_id),
+            )
+            return SendResult(success=False, error="Invalid destination number")
+
         formatted = self.format_message(content)
         chunks = self.truncate_message(formatted)
-        last_result = SendResult(success=True)
+        last_result = SendResult(success=False, error="No message sent")
 
         url = f"{TWILIO_API_BASE}/{self._account_sid}/Messages.json"
         headers = {
@@ -176,17 +229,21 @@ class SmsAdapter(BasePlatformAdapter):
             for chunk in chunks:
                 form_data = aiohttp.FormData()
                 form_data.add_field("From", self._from_number)
-                form_data.add_field("To", chat_id)
+                form_data.add_field("To", to_number)
                 form_data.add_field("Body", chunk)
 
                 try:
                     async with session.post(url, data=form_data, headers=headers) as resp:
                         body = await resp.json()
                         if resp.status >= 400:
-                            error_msg = body.get("message", str(body))
+                            error_msg = (
+                                body.get("message", str(body))
+                                if isinstance(body, dict)
+                                else str(body)
+                            )
                             logger.error(
                                 "[sms] send failed to %s: %s %s",
-                                redact_phone(chat_id),
+                                redact_phone(to_number),
                                 resp.status,
                                 error_msg,
                             )
@@ -194,10 +251,25 @@ class SmsAdapter(BasePlatformAdapter):
                                 success=False,
                                 error=f"Twilio {resp.status}: {error_msg}",
                             )
-                        msg_sid = body.get("sid", "")
-                        last_result = SendResult(success=True, message_id=msg_sid)
+                        if not twilio_accepted_send(body):
+                            payload = body if isinstance(body, dict) else {}
+                            error_msg = (
+                                payload.get("message")
+                                or payload.get("error_message")
+                                or f"Twilio {payload.get('status', 'unknown')} without accepted sid"
+                            )
+                            logger.error(
+                                "[sms] provider returned no accepted message — "
+                                "not marking sent to %s: %s",
+                                redact_phone(to_number),
+                                error_msg,
+                            )
+                            return SendResult(success=False, error=str(error_msg))
+                        last_result = SendResult(
+                            success=True, message_id=body.get("sid", "")
+                        )
                 except Exception as e:
-                    logger.error("[sms] send error to %s: %s", redact_phone(chat_id), e)
+                    logger.error("[sms] send error to %s: %s", redact_phone(to_number), e)
                     return SendResult(success=False, error=str(e))
         finally:
             # Close session only if we created a fallback (no persistent session)
