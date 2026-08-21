@@ -48,12 +48,21 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { error } = await supabase
+    const { data: cancelled, error } = await supabase
       .from('Tour')
       .update({ status: 'cancelled', updatedAt: new Date().toISOString() })
-      .eq('id', tour.id);
+      .eq('id', tour.id)
+      .in('status', ['scheduled', 'confirmed'])
+      .select('id')
+      .maybeSingle();
 
     if (error) throw error;
+    if (!cancelled) {
+      return NextResponse.json(
+        { error: 'Tour changed while cancelling. Refresh and try again.' },
+        { status: 409 },
+      );
+    }
     return NextResponse.json({ success: true, status: 'cancelled' });
   }
 

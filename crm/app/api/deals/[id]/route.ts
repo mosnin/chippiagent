@@ -221,6 +221,69 @@ export async function PATCH(
       return NextResponse.json({ error: 'Invalid priority' }, { status: 400 });
     }
 
+    const hasContactDelta =
+      body.addContactIds !== undefined || body.removeContactIds !== undefined;
+    if (hasContactDelta && body.contactIds !== undefined) {
+      return NextResponse.json(
+        { error: 'Send contactIds or addContactIds/removeContactIds, not both' },
+        { status: 400 },
+      );
+    }
+
+    async function validateContactIds(raw: unknown, field: string): Promise<string[] | NextResponse> {
+      if (!Array.isArray(raw)) {
+        return NextResponse.json({ error: `${field} must be an array` }, { status: 400 });
+      }
+      if (raw.length > 50) {
+        return NextResponse.json({ error: `${field}: max 50 entries` }, { status: 400 });
+      }
+      const wantedRaw = raw.filter((cId: unknown): cId is string => typeof cId === 'string');
+      if (wantedRaw.length === 0) return [];
+      const { data: validContacts, error: vcError } = await supabase
+        .from('Contact')
+        .select('id')
+        .in('id', wantedRaw)
+        .eq('spaceId', space.id);
+      if (vcError) {
+        console.error('[deals/PATCH] contact validation error:', vcError);
+        return NextResponse.json({ error: 'Failed to validate contacts' }, { status: 500 });
+      }
+      return (validContacts ?? []).map((c: { id: string }) => c.id);
+    }
+
+    // Delta ops: two concurrent "add contact" writes no longer last-write-wins
+    // each other when the client used to send the full replacement list.
+    if (hasContactDelta) {
+      const toRemoveRaw = body.removeContactIds !== undefined
+        ? await validateContactIds(body.removeContactIds, 'removeContactIds')
+        : [];
+      if (toRemoveRaw instanceof NextResponse) return toRemoveRaw;
+      const toAddRaw = body.addContactIds !== undefined
+        ? await validateContactIds(body.addContactIds, 'addContactIds')
+        : [];
+      if (toAddRaw instanceof NextResponse) return toAddRaw;
+
+      if (toRemoveRaw.length > 0) {
+        const { error: delError } = await supabase
+          .from('DealContact')
+          .delete()
+          .eq('dealId', id)
+          .in('contactId', toRemoveRaw);
+        if (delError) {
+          console.error('[deals/PATCH] dealContact delete error:', delError);
+          return NextResponse.json({ error: 'Failed to update deal contacts' }, { status: 500 });
+        }
+      }
+      if (toAddRaw.length > 0) {
+        const dcInserts = toAddRaw.map((cId) => ({ dealId: id, contactId: cId }));
+        const { error: insertError } = await supabase.from('DealContact').insert(dcInserts);
+        if (insertError && insertError.code !== '23505') {
+          console.error('[deals/PATCH] dealContact insert error:', insertError);
+          return NextResponse.json({ error: 'Failed to link contacts' }, { status: 500 });
+        }
+      }
+    }
+
     // Handle dealContacts replacement — diff-based instead of delete-all-then-insert.
     // The old approach left the list empty between the DELETE and the INSERT, so
     // two concurrent PATCHes raced (both DELETE, then both INSERT — losing the

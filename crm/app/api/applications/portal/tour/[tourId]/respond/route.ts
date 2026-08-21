@@ -123,15 +123,27 @@ export async function POST(
     );
   }
 
-  // Update tour status
-  const { error: updateError } = await supabase
+  // CAS on the status we validated. A realtor/Chippi completion in the
+  // gap used to be last-write-wins back to confirmed/cancelled.
+  const allowedFrom =
+    action === 'confirm' ? ['scheduled'] : ['scheduled', 'confirmed'];
+  const { data: updatedTour, error: updateError } = await supabase
     .from('Tour')
     .update({ status: targetStatus, updatedAt: new Date().toISOString() })
     .eq('id', tourId)
-    .eq('spaceId', contact.spaceId);
+    .eq('spaceId', contact.spaceId)
+    .in('status', allowedFrom)
+    .select('id')
+    .maybeSingle();
   if (updateError) {
     console.error('[portal/tour-respond] Tour update error:', updateError);
     return NextResponse.json({ error: 'Failed to update tour' }, { status: 500 });
+  }
+  if (!updatedTour) {
+    return NextResponse.json(
+      { error: 'This tour was updated and can no longer be changed.' },
+      { status: 409 },
+    );
   }
 
   // Compose receipt message for the thread.

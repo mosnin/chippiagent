@@ -119,13 +119,21 @@ export async function PATCH(
     }
   }
 
-  const { data, error } = await supabase
-    .from('Tour')
-    .update(update)
-    .eq('id', id)
-    .select()
-    .single();
+  // Status transitions CAS on the status we validated against. Without
+  // this, a guest confirm/cancel or Chippi cancel can last-write-wins
+  // overwrite a concurrent completed / no_show.
+  let patchQuery = supabase.from('Tour').update(update).eq('id', id);
+  if (body.status !== undefined && body.status !== ctx.tour.status) {
+    patchQuery = patchQuery.eq('status', ctx.tour.status);
+  }
+  const { data, error } = await patchQuery.select().maybeSingle();
   if (error) throw error;
+  if (!data) {
+    return NextResponse.json(
+      { error: 'Tour changed while saving. Refresh and try again.' },
+      { status: 409 },
+    );
+  }
 
   // Auto-create follow-up reminder when tour is completed (24h later)
   if (body.status === 'completed' && ctx.tour.status !== 'completed' && data.contactId) {

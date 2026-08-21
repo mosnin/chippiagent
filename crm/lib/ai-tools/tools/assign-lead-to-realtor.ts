@@ -21,6 +21,7 @@ import crypto from 'crypto';
 import { z } from 'zod';
 import { supabase } from '@/lib/supabase';
 import { logger } from '@/lib/logger';
+import { retryOnConflict } from '@/lib/cas-write';
 import { defineTool } from '../types';
 
 const parameters = z
@@ -87,13 +88,20 @@ export const assignLeadToRealtorTool = defineTool<typeof parameters, AssignResul
     // ── Contact must exist (in this space OR linked to the brokerage) ──────
     const { data: contact } = await supabase
       .from('Contact')
-      .select('id, name, spaceId, brokerageId')
+      .select('id, name, spaceId, brokerageId, applicationStatusNote, updatedAt')
       .eq('id', args.personId)
       .maybeSingle();
     if (!contact) {
       return { summary: 'Contact not found.', display: 'error' };
     }
-    const c = contact as { id: string; name: string; spaceId: string; brokerageId: string | null };
+    const c = contact as {
+      id: string;
+      name: string;
+      spaceId: string;
+      brokerageId: string | null;
+      applicationStatusNote: string | null;
+      updatedAt: string;
+    };
     const brokerageId = (realtorMembership as { brokerageId: string }).brokerageId;
     const callerOwnsThisContact = c.spaceId === ctx.space.id || c.brokerageId === brokerageId;
     if (!callerOwnsThisContact) {
@@ -111,23 +119,53 @@ export const assignLeadToRealtorTool = defineTool<typeof parameters, AssignResul
       (realtor as { email?: string } | null)?.email ??
       args.realtorUserId;
 
-    // ── Audit-only update: applicationStatusNote + activity note. No clone.
-    const now = new Date().toISOString();
-    const meta = JSON.stringify({
-      assignedTo: args.realtorUserId,
-      assignedToName: realtorName,
-      assignedAt: now,
-      via: 'on_demand_agent',
-      reason: args.why,
+    // Merge into existing applicationStatusNote so a concurrent assign-lead
+    // clone pointer (assignedContactId) is not last-write-wins-clobbered.
+    const claimed = await retryOnConflict<{
+      applicationStatusNote: string | null;
+      updatedAt: string;
+    }>({
+      table: 'Contact',
+      id: c.id,
+      readColumns: 'applicationStatusNote, updatedAt',
+      build: (current) => {
+        let prev: Record<string, unknown> = {};
+        if (current.applicationStatusNote) {
+          try {
+            const parsed = JSON.parse(current.applicationStatusNote) as unknown;
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+              prev = parsed as Record<string, unknown>;
+            }
+          } catch {
+            // Corrupt JSON — replace, but keep going.
+          }
+        }
+        const now = new Date().toISOString();
+        return {
+          patch: {
+            applicationStatusNote: JSON.stringify({
+              ...prev,
+              assignedTo: args.realtorUserId,
+              assignedToName: realtorName,
+              assignedAt: now,
+              via: 'on_demand_agent',
+              reason: args.why,
+            }),
+            updatedAt: now,
+          },
+          match: { updatedAt: current.updatedAt },
+        };
+      },
     });
-
-    const { error: updateErr } = await supabase
-      .from('Contact')
-      .update({ applicationStatusNote: meta, updatedAt: now })
-      .eq('id', c.id);
-    if (updateErr) {
-      logger.error('[tools.assign_lead] update failed', { contactId: c.id }, updateErr);
-      return { summary: `Reassignment failed: ${updateErr.message}`, display: 'error' };
+    if (!claimed.ok) {
+      logger.error('[tools.assign_lead] update failed', { contactId: c.id }, claimed.error);
+      return {
+        summary:
+          claimed.reason === 'conflict'
+            ? 'This contact changed while Chippi was assigning it. Try again.'
+            : `Reassignment failed.`,
+        display: 'error',
+      };
     }
 
     const { error: activityErr } = await supabase.from('ContactActivity').insert({

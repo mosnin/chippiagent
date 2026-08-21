@@ -2,6 +2,7 @@ import { supabase } from '@/lib/supabase';
 import { getSpaceByOwnerId } from '@/lib/space';
 import { notifyNewLead } from '@/lib/notify';
 import { fireAgentTrigger } from '@/lib/agent/fire-trigger';
+import { casUpdate, retryOnConflict } from '@/lib/cas-write';
 
 export type AssignLeadResult =
   | { ok: true; newContactId: string; assignedToSpaceId: string }
@@ -82,69 +83,113 @@ export async function assignLeadToRealtor(params: {
     .maybeSingle();
   const realtorName = realtorUser?.name ?? realtorUser?.email ?? realtorUserId;
 
-  // ── Prevent double-assignment ──────────────────────────────────────────
-  const existingTags: string[] = contact.tags ?? [];
-  if (existingTags.includes('assigned')) {
-    return { ok: false, error: 'This lead has already been assigned', status: 409 };
+  // Claim the original row FIRST with an updatedAt CAS so two concurrent
+  // assigns cannot both clone. A stale tags/notes snapshot written after
+  // another writer (leads-page new-lead clear, broker note) is last-write-wins
+  // data loss — retry from a fresh read instead.
+  const newContactId = crypto.randomUUID();
+  let assignmentMeta = '';
+  let rollback: {
+    tags: string[];
+    notes: string | null;
+    applicationStatus: string | null;
+    applicationStatusNote: string | null;
+  } | null = null;
+
+  const claim = await retryOnConflict<Record<string, unknown> & { updatedAt: string }>({
+    table: 'Contact',
+    id: contactId,
+    readColumns: '*',
+    build: (current) => {
+      const existingTags: string[] = (current.tags as string[] | null) ?? [];
+      if (existingTags.includes('assigned')) return { abort: 'conflict' };
+      const now = new Date().toISOString();
+      assignmentMeta = JSON.stringify({
+        assignedTo: realtorUserId,
+        assignedToName: realtorName,
+        assignedContactId: newContactId,
+        assignedSpaceId: realtorSpace.id,
+        assignedAt: now,
+      });
+      rollback = {
+        tags: existingTags,
+        notes: (current.notes as string | null) ?? null,
+        applicationStatus: (current.applicationStatus as string | null) ?? null,
+        applicationStatusNote: (current.applicationStatusNote as string | null) ?? null,
+      };
+      const assignmentNote = [
+        current.notes,
+        `\nAssigned to: ${realtorName}`,
+        `--- Assigned to realtor (${realtorUserId}) on ${now} by ${assignedByUserId} ---`,
+      ]
+        .filter(Boolean)
+        .join('\n');
+      return {
+        patch: {
+          tags: [...existingTags.filter((t: string) => t !== 'new-lead'), 'assigned'],
+          notes: assignmentNote,
+          applicationStatus: 'assigned',
+          applicationStatusNote: assignmentMeta,
+          updatedAt: now,
+        },
+        match: { updatedAt: current.updatedAt },
+      };
+    },
+  });
+
+  if (!claim.ok) {
+    if (claim.reason === 'not_found') {
+      return { ok: false, error: 'Contact not found in your brokerage space', status: 404 };
+    }
+    if (claim.reason === 'conflict') {
+      return { ok: false, error: 'This lead has already been assigned', status: 409 };
+    }
+    throw claim.error ?? new Error('Failed to claim lead');
   }
 
-  // ── Clone the contact into the realtor's space ─────────────────────────
-  const newContactId = crypto.randomUUID();
-  const now = new Date().toISOString();
+  const claimed = claim.row;
 
+  // ── Clone the contact into the realtor's space ─────────────────────────
   const { error: cloneError } = await supabase.from('Contact').insert({
     id: newContactId,
     spaceId: realtorSpace.id,
-    name: contact.name,
-    email: contact.email,
-    phone: contact.phone,
-    budget: contact.budget,
-    preferences: contact.preferences,
-    address: contact.address,
-    notes: contact.notes,
-    type: contact.type,
-    properties: contact.properties ?? [],
+    name: claimed.name,
+    email: claimed.email,
+    phone: claimed.phone,
+    budget: claimed.budget,
+    preferences: claimed.preferences,
+    address: claimed.address,
+    notes: rollback?.notes ?? claimed.notes,
+    type: claimed.type,
+    properties: claimed.properties ?? [],
     tags: ['assigned-by-broker', 'new-lead'],
-    scoringStatus: contact.scoringStatus,
-    leadScore: contact.leadScore,
-    scoreLabel: contact.scoreLabel,
-    scoreSummary: contact.scoreSummary,
-    scoreDetails: contact.scoreDetails,
+    scoringStatus: claimed.scoringStatus,
+    leadScore: claimed.leadScore,
+    scoreLabel: claimed.scoreLabel,
+    scoreSummary: claimed.scoreSummary,
+    scoreDetails: claimed.scoreDetails,
     sourceLabel: `brokerage: ${brokerage.name}`,
-    applicationData: contact.applicationData,
-    applicationRef: contact.applicationRef,
-    applicationStatus: contact.applicationStatus,
+    applicationData: claimed.applicationData,
+    applicationRef: claimed.applicationRef,
+    applicationStatus: rollback?.applicationStatus ?? claimed.applicationStatus,
   });
-  if (cloneError) throw cloneError;
-
-  // ── Mark the original contact as assigned ──────────────────────────────
-  const assignmentNote = [
-    contact.notes,
-    `\nAssigned to: ${realtorName}`,
-    `--- Assigned to realtor (${realtorUserId}) on ${now} by ${assignedByUserId} ---`,
-  ]
-    .filter(Boolean)
-    .join('\n');
-
-  const assignmentMeta = JSON.stringify({
-    assignedTo: realtorUserId,
-    assignedToName: realtorName,
-    assignedContactId: newContactId,
-    assignedSpaceId: realtorSpace.id,
-    assignedAt: now,
-  });
-
-  const { error: updateError } = await supabase
-    .from('Contact')
-    .update({
-      tags: [...existingTags.filter((t: string) => t !== 'new-lead'), 'assigned'],
-      notes: assignmentNote,
-      applicationStatus: 'assigned',
-      applicationStatusNote: assignmentMeta,
-      updatedAt: now,
-    })
-    .eq('id', contactId);
-  if (updateError) throw updateError;
+  if (cloneError) {
+    if (rollback && assignmentMeta) {
+      await casUpdate({
+        table: 'Contact',
+        id: contactId,
+        match: { applicationStatusNote: assignmentMeta },
+        patch: {
+          tags: rollback.tags,
+          notes: rollback.notes,
+          applicationStatus: rollback.applicationStatus,
+          applicationStatusNote: rollback.applicationStatusNote,
+          updatedAt: new Date().toISOString(),
+        },
+      });
+    }
+    throw cloneError;
+  }
 
   console.info('[assign-lead] lead assigned', {
     contactId,

@@ -25,7 +25,6 @@ export function ConvertLeadDialog({
   onOpenChange,
   leadName,
   leadId,
-  currentTags,
   onConverted,
 }: ConvertLeadDialogProps) {
   const [loading, setLoading] = useState(false);
@@ -33,34 +32,14 @@ export function ConvertLeadDialog({
   async function handleConvert() {
     setLoading(true);
     try {
-      // Fetch the full contact first so we can send all fields back intact.
-      // Sending only { tags } would wipe every other field to null because
-      // the PATCH handler does a full-row update.
-      const getRes = await fetch(`/api/contacts/${leadId}`);
-      if (!getRes.ok) {
-        toast.error("Couldn't pull this contact. Try again.");
-        return;
-      }
-      const contact = await getRes.json();
-
-      const newTags = (contact.tags ?? []).filter(
-        (t: string) => t !== 'application-link' && t !== 'new-lead',
-      );
-
+      // PATCH is field-scoped. Sending a stale full-row snapshot here
+      // last-write-wins-clobbered concurrent Chippi / assign / note writes
+      // (phone, notes, follow-up, assigned tag). Only remove the lead tags.
       const res = await fetch(`/api/contacts/${leadId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: contact.name,
-          email: contact.email ?? '',
-          phone: contact.phone ?? '',
-          budget: contact.budget ?? '',
-          preferences: contact.preferences ?? '',
-          properties: contact.properties ?? [],
-          address: contact.address ?? '',
-          notes: contact.notes ?? '',
-          type: contact.type ?? 'QUALIFICATION',
-          tags: newTags,
+          removeTags: ['application-link', 'new-lead'],
         }),
       });
       if (res.ok) {
