@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { requireContactAccess } from '@/lib/api-auth';
+import { escapeHtml } from '@/lib/html-escape';
 
 /**
  * GET — Generate a plain-text formatted rental application for download.
@@ -41,14 +42,27 @@ export async function GET(req: NextRequest) {
   const businessName = settings?.businessName || space?.name || 'Property Management';
   const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 
-  const fmt = (v: any, prefix = '') => v != null && v !== '' ? `${prefix}${v}` : '—';
-  const fmtBool = (v: any) => v === true ? 'Yes' : v === false ? 'No' : '—';
-  const fmtMoney = (v: any) => v != null ? `$${Number(v).toLocaleString()}` : '—';
+  const fmt = (v: any, prefix = '') =>
+    v != null && v !== '' ? `${escapeHtml(prefix)}${escapeHtml(v)}` : '—';
+  const fmtBool = (v: any) => (v === true ? 'Yes' : v === false ? 'No' : '—');
+  const fmtMoney = (v: any) =>
+    v != null && v !== '' ? `$${escapeHtml(Number(v).toLocaleString())}` : '—';
+  const safeName = escapeHtml(contact.name) || 'Applicant';
+  const safeBusiness = escapeHtml(businessName);
+  const safeScoreLabel = escapeHtml(contact.scoreLabel || 'unscored');
+  const scoreClass =
+    contact.scoreLabel === 'hot' || contact.scoreLabel === 'warm' || contact.scoreLabel === 'cold'
+      ? contact.scoreLabel
+      : 'cold';
+  const safeScoreSummary = escapeHtml(contact.scoreSummary);
+  const safeNotes = escapeHtml(app.additionalNotes);
+  const safePetDetails = escapeHtml(app.petDetails);
+  const safeId = escapeHtml(contact.id);
 
   const html = `<!DOCTYPE html>
 <html><head>
 <meta charset="utf-8">
-<title>Rental Application — ${contact.name}</title>
+<title>Rental Application — ${safeName}</title>
 <style>
   @media print { body { margin: 0; } .no-print { display: none; } }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 800px; margin: 0 auto; padding: 40px 30px; color: #1a1a1a; font-size: 13px; line-height: 1.5; }
@@ -75,15 +89,15 @@ export async function GET(req: NextRequest) {
 <button class="print-btn no-print" onclick="window.print()">Print / Save as PDF</button>
 <div class="header">
   <h1>Rental Application</h1>
-  <p>${businessName}</p>
+  <p>${safeBusiness}</p>
   <p>Generated ${date}</p>
 </div>
 
 ${contact.leadScore != null ? `
 <div style="text-align:center;margin-bottom:20px;">
   <span style="font-size:28px;font-weight:800;">${Math.round(contact.leadScore)}</span>
-  <span class="score-badge score-${contact.scoreLabel || 'cold'}">${contact.scoreLabel || 'unscored'}</span>
-  ${contact.scoreSummary ? `<p style="color:#666;font-size:12px;margin-top:4px;">${contact.scoreSummary}</p>` : ''}
+  <span class="score-badge score-${scoreClass}">${safeScoreLabel}</span>
+  ${safeScoreSummary ? `<p style="color:#666;font-size:12px;margin-top:4px;">${safeScoreSummary}</p>` : ''}
 </div>` : ''}
 
 <h2>Applicant Information</h2>
@@ -118,7 +132,7 @@ ${contact.leadScore != null ? `
   <tr><td>Adults</td><td>${fmt(app.adultsOnApplication)}</td></tr>
   <tr><td>Children/Dependents</td><td>${fmt(app.childrenOrDependents)}</td></tr>
   <tr><td>Co-Renters</td><td>${fmt(app.coRenters)}</td></tr>
-  <tr><td>Emergency Contact</td><td>${fmt(app.emergencyContactName)}${app.emergencyContactPhone ? ` — ${app.emergencyContactPhone}` : ''}</td></tr>
+  <tr><td>Emergency Contact</td><td>${fmt(app.emergencyContactName)}${app.emergencyContactPhone ? ` — ${fmt(app.emergencyContactPhone)}` : ''}</td></tr>
 </table>
 
 <h2>Income &amp; Employment</h2>
@@ -132,8 +146,8 @@ ${contact.leadScore != null ? `
 
 <h2>Rental History</h2>
 <table>
-  <tr><td>Current Landlord</td><td>${fmt(app.currentLandlordName)}${app.currentLandlordPhone ? ` — ${app.currentLandlordPhone}` : ''}</td></tr>
-  <tr><td>Previous Landlord</td><td>${fmt(app.previousLandlordName)}${app.previousLandlordPhone ? ` — ${app.previousLandlordPhone}` : ''}</td></tr>
+  <tr><td>Current Landlord</td><td>${fmt(app.currentLandlordName)}${app.currentLandlordPhone ? ` — ${fmt(app.currentLandlordPhone)}` : ''}</td></tr>
+  <tr><td>Previous Landlord</td><td>${fmt(app.previousLandlordName)}${app.previousLandlordPhone ? ` — ${fmt(app.previousLandlordPhone)}` : ''}</td></tr>
   <tr><td>Current Rent Paid</td><td>${fmtMoney(app.currentRentPaid)}</td></tr>
   <tr><td>Late Payments</td><td${app.latePayments ? ' class="flag"' : ''}>${fmtBool(app.latePayments)}</td></tr>
   <tr><td>Lease Violations</td><td${app.leaseViolations ? ' class="flag"' : ''}>${fmtBool(app.leaseViolations)}</td></tr>
@@ -147,12 +161,12 @@ ${contact.leadScore != null ? `
   <tr><td>Bankruptcy (7 yrs)</td><td${app.bankruptcy ? ' class="flag"' : ''}>${fmtBool(app.bankruptcy)}</td></tr>
   <tr><td>Background Check</td><td>${fmtBool(app.backgroundAcknowledgment)}</td></tr>
   <tr><td>Smoking</td><td>${fmtBool(app.smoking)}</td></tr>
-  <tr><td>Pets</td><td>${app.hasPets ? `Yes${app.petDetails ? ` — ${app.petDetails}` : ''}` : fmtBool(app.hasPets)}</td></tr>
+  <tr><td>Pets</td><td>${app.hasPets ? `Yes${safePetDetails ? ` — ${safePetDetails}` : ''}` : fmtBool(app.hasPets)}</td></tr>
 </table>
 
-${app.additionalNotes ? `
+${safeNotes ? `
 <h2>Additional Notes</h2>
-<p>${app.additionalNotes}</p>` : ''}
+<p>${safeNotes}</p>` : ''}
 
 <div class="signature">
   <table style="margin:0">
@@ -164,7 +178,7 @@ ${app.additionalNotes ? `
 </div>
 
 <div class="footer">
-  <p>This document was generated from ${businessName}'s CRM. Application ID: ${contact.id}</p>
+  <p>This document was generated from ${safeBusiness}'s CRM. Application ID: ${safeId}</p>
 </div>
 </body></html>`;
 

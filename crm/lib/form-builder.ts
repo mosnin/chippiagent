@@ -754,6 +754,45 @@ export function getDefaultFormConfig(
     : DEFAULT_RENTAL_FORM_CONFIG;
 }
 
+/**
+ * True when `body` includes at least one answered non-system question from
+ * `config`. Used so `/api/public/apply` can detect an IntakeChat default-form
+ * payload even when the space has no stored formConfig (legacy source).
+ *
+ * System fields (`name` / `email` / `phone`) are ignored: legacy POSTs also
+ * send those, and treating them as a match would reject old payloads.
+ */
+export function submissionMatchesFormConfig(
+  body: Record<string, unknown>,
+  config: IntakeFormConfig,
+): boolean {
+  for (const section of config.sections) {
+    for (const question of section.questions) {
+      if (question.system) continue;
+      const value = body[question.id];
+      if (value == null || value === '') continue;
+      if (Array.isArray(value) && value.length === 0) continue;
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Prefer a stored config. If the space is still on legacy/unconfigured
+ * intake, use the same DEFAULT_* template IntakeChat already asked —
+ * otherwise Zod strips the UUID-keyed answers and the submission is lost.
+ */
+export function resolveApplyFormConfig(
+  stored: IntakeFormConfig | null,
+  leadType: 'rental' | 'buyer',
+  body: Record<string, unknown>,
+): IntakeFormConfig | null {
+  if (stored) return stored;
+  const fallback = getDefaultFormConfig(leadType);
+  return submissionMatchesFormConfig(body, fallback) ? fallback : null;
+}
+
 // ── Snapshot for submissions ──
 
 /**

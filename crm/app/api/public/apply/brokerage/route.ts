@@ -16,7 +16,7 @@ import { notificationForNewBrokerageLead } from '@/lib/notification-voice';
 import { sendApplicationConfirmation } from '@/lib/email';
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit';
 import { z } from 'zod';
-import { getFormConfigs, getDefaultFormConfig } from '@/lib/form-builder';
+import { getFormConfigs, resolveApplyFormConfig } from '@/lib/form-builder';
 import { formConfigSchema, type FormQuestion } from '@/lib/form-config-schema';
 import type { ScoringModel } from '@/lib/scoring/scoring-model-types';
 import { logger } from '@/lib/logger';
@@ -371,6 +371,10 @@ export async function POST(req: NextRequest) {
       }, err);
       formConfig = null;
     }
+
+    // Same default-template fallback as /api/public/apply: IntakeChat asks
+    // DEFAULT_* questions when no brokerage/space config exists.
+    formConfig = resolveApplyFormConfig(formConfig, resolvedLeadType, rawBody);
 
     // ── Fetch the saved ScoringModel (AI-generated weights/ranges) ─────
     let scoringModel: ScoringModel | null = null;

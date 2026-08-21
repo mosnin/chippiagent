@@ -18,7 +18,7 @@ import { notifyNewLead } from '@/lib/notify';
 import { sendApplicationConfirmation } from '@/lib/email';
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit';
 import { formConfigSchema, type IntakeFormConfig, type FormQuestion } from '@/lib/form-config-schema';
-import { getFormConfigs, getDefaultFormConfig } from '@/lib/form-builder';
+import { getFormConfigs, resolveApplyFormConfig } from '@/lib/form-builder';
 import type { ScoringModel } from '@/lib/scoring/scoring-model-types';
 import { logger } from '@/lib/logger';
 
@@ -342,6 +342,11 @@ export async function POST(req: NextRequest) {
       }, err);
       formConfig = null;
     }
+
+    // IntakeChat uses DEFAULT_*_FORM_CONFIG when the space has no stored
+    // config. If we fall through to publicApplicationSchema, Zod strips the
+    // UUID-keyed answers and the realtor never sees what the applicant typed.
+    formConfig = resolveApplyFormConfig(formConfig, resolvedLeadType, rawBody);
 
     // ── Fetch the saved ScoringModel (AI-generated weights/ranges) ─────
     let scoringModel: ScoringModel | null = null;
