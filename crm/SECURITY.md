@@ -213,7 +213,6 @@ Implementation in `lib/rate-limit.ts` using Upstash Redis sliding-window counter
 |----------|-------|-----|
 | `POST /api/public/apply` | 10/hr per IP | `apply:rl:{ip}` |
 | `POST /api/ai/task` | 30 tasks/hr per user | `ai:task:{userId}` |
-| `POST /api/ai/task/approve/[requestId]` | 60/hr per user | `ai:task-approve:{userId}` |
 | `POST /api/contacts/import` | 5/hr per user | User-based |
 | `POST /api/broker/invite` | 20/hr per user | User-based |
 | `POST /api/broker/join` | 10/hr per user | User-based |

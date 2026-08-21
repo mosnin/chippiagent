@@ -10,7 +10,7 @@ Current as of 2026-05. Read alongside `AGENTS.md` §1–2 (the canonical definit
 
 Chippi is an **agentic operating system for U.S. real estate agents and brokerages.**
 
-A realtor's book of business — contacts, leads, deals, tours, properties, applications — is the workspace. Chippi is an autonomous AI agent that works *inside* that workspace on the realtor's behalf: it qualifies inbound leads, drafts and sends follow-up, schedules tours, advances deals, produces marketing content, and surfaces what needs attention — taking sign-off only where a human decision is genuinely required.
+A realtor's book of business — contacts, leads, deals, tours, properties, applications — is the workspace. Chippi is an autonomous AI agent that works *inside* that workspace on the realtor's behalf: it qualifies inbound leads, drafts and sends follow-up, schedules tours, advances deals, produces marketing content, and surfaces what needs attention.
 
 **The product is the agent.** The CRM-style data structures underneath it — contacts, deals, pipelines — are *substrate, not the product*. Chippi is not a database the realtor maintains; it is an operator that maintains it for them. It runs two ways:
 
@@ -50,7 +50,7 @@ The product is broad. The **go-to-market entry point is deliberately narrow.** T
 
 A capability snapshot — categorical, not exhaustive. For the live surface map see `ARCHITECTURE.md` and `README.md`.
 
-- **Autonomous agent** — chat plus event-triggered background runs; tool-use across the whole workspace; every mutation is approval-gated; Chippi drafts, it never sends silently
+- **Autonomous agent** — chat plus event-triggered background runs; tool-use across the whole workspace; Chippi acts and sends — it does not wait for a realtor to approve
 - **Public intake** — branded, customizable, conversational application pages; separate rental and buyer flows
 - **Explainable lead scoring** — every lead gets a score, a hot/warm/cold label, and a plain-language reason
 - **Lead → contact → deal pipeline** — the CRM substrate, with customizable stages

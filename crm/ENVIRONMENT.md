@@ -54,7 +54,7 @@ Clerk requires additional environment variables that are standard for `@clerk/ne
 | **Supabase pgvector** | Vector storage and similarity search for RAG-enriched AI assistant context, scoped per workspace | `lib/zilliz.ts`, `lib/vectorize.ts`, `supabase/schema.sql` (`DocumentEmbedding` table + `match_documents` RPC) |
 | **Resend** | Transactional email — sends lead notifications, tour confirmations/reminders/follow-ups, brokerage invitations, follow-up digests, and CRM emails | `lib/email.ts`, `lib/tour-emails.ts`, `app/api/public/apply/route.ts` |
 | **Telnyx** | SMS notifications — sends text messages to workspace owners for new leads, tour bookings, and deals (opt-in per workspace via settings) | `lib/sms.ts`, `lib/notify.ts` |
-| **Upstash Redis** | Rate limiting (`lib/rate-limit.ts`), pending-approval state for the AI agent (`lib/ai-tools/pending-approvals.ts`), legacy slug metadata + admin dashboard | `lib/redis.ts`, `lib/rate-limit.ts`, `lib/ai-tools/pending-approvals.ts`, `lib/slugs.ts`, `app/actions.ts` |
+| **Upstash Redis** | Rate limiting (`lib/rate-limit.ts`), legacy slug metadata + admin dashboard | `lib/redis.ts`, `lib/rate-limit.ts`, `lib/slugs.ts`, `app/actions.ts` |
 | **Stripe** | Brokerage seat-based billing checkout/portal/webhook | `lib/stripe.ts`, `app/api/billing/checkout/route.ts`, `app/api/billing/portal/route.ts`, `app/api/billing/cancel/route.ts` |
 | **Vercel** | Deployment target, analytics, speed insights | `@vercel/analytics`, `@vercel/speed-insights` packages |
 
