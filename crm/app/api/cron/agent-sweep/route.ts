@@ -168,6 +168,16 @@ async function sweepOne(spaceId: string, pendingCount: number): Promise<SweepOut
     return { spaceId, status: 'skipped', reason: 'recent' };
   }
 
+  // The hourly routines cron shares this minute at 00/04/08/12/16/20 UTC.
+  // Two Modal dispatches for the same space: one wins the run lock, the
+  // other no-ops. Claim first so we don't fire (or mark swept) a no-op.
+  if (await spaceIsRunning(spaceId)) {
+    return { spaceId, status: 'skipped', reason: 'in_flight' };
+  }
+  if (!(await claimDispatch(spaceId))) {
+    return { spaceId, status: 'skipped', reason: 'in_flight' };
+  }
+
   // Fire the Modal webhook. Fire-and-forget semantics: we await the HTTP
   // response so we know whether Modal accepted the job, but we don't wait
   // for the agent run to finish.
@@ -248,4 +258,41 @@ async function markSwept(spaceId: string): Promise<void> {
 
 function sweepKey(spaceId: string): string {
   return `agent:sweep:last:${spaceId}`;
+}
+
+// Shared with /api/cron/routines. Modal's run lock is agent:runlock:{id}.
+const DISPATCH_LOCK_TTL_S = 660;
+
+async function spaceIsRunning(spaceId: string): Promise<boolean> {
+  const kvUrl = process.env.KV_REST_API_URL;
+  const kvToken = process.env.KV_REST_API_TOKEN;
+  if (!kvUrl || !kvToken) return false;
+  try {
+    const res = await fetch(
+      `${kvUrl}/get/${encodeURIComponent(`agent:runlock:${spaceId}`)}`,
+      { headers: { Authorization: `Bearer ${kvToken}` } },
+    );
+    if (!res.ok) return false;
+    const { result } = (await res.json()) as { result: string | null };
+    return Boolean(result);
+  } catch {
+    return false;
+  }
+}
+
+async function claimDispatch(spaceId: string): Promise<boolean> {
+  const kvUrl = process.env.KV_REST_API_URL;
+  const kvToken = process.env.KV_REST_API_TOKEN;
+  if (!kvUrl || !kvToken) return true;
+  try {
+    const res = await fetch(
+      `${kvUrl}/set/${encodeURIComponent(`agent:dispatch:${spaceId}`)}/1/EX/${DISPATCH_LOCK_TTL_S}/NX`,
+      { method: 'POST', headers: { Authorization: `Bearer ${kvToken}` } },
+    );
+    if (!res.ok) return true;
+    const { result } = (await res.json()) as { result: string | null };
+    return result !== null;
+  } catch {
+    return true;
+  }
 }
