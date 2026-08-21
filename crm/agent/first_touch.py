@@ -252,26 +252,44 @@ def first_touch_instruction(triggers: list[dict]) -> str | None:
     )
 
 
-def _property_from_contact(contact: dict[str, Any]) -> str | None:
-    address = (contact.get("address") or "").strip()
-    if address:
-        return address
-    for item in contact.get("properties") or []:
-        if isinstance(item, str) and item.strip():
-            return item.strip()
+_LISTING_APPLICATION_KEYS = (
+    "propertyAddress",
+    "listingAddress",
+    "interestedProperty",
+)
+
+
+def listing_from_contact(contact: dict[str, Any]) -> str | None:
+    """The listing this SMS is about — never the lead's home / mailing address.
+
+    Apply stores currentAddress on Contact.address and the listing on
+    Contact.preferences + applicationData.propertyAddress. Using address
+    first attached the wrong property to outbound texts.
+    """
     data = contact.get("applicationData")
     if isinstance(data, dict):
-        for key in (
-            "address",
-            "propertyAddress",
-            "listingAddress",
-            "property",
-            "interestedProperty",
-        ):
+        for key in _LISTING_APPLICATION_KEYS:
             value = data.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
+    pref = (contact.get("preferences") or "").strip()
+    if pref:
+        return pref
+    for item in contact.get("properties") or []:
+        if isinstance(item, str) and item.strip():
+            return item.strip()
     return None
+
+
+def listing_from_tour_or_contact(
+    tour: dict[str, Any] | None,
+    contact: dict[str, Any],
+) -> str | None:
+    if tour:
+        address = (tour.get("propertyAddress") or "").strip()
+        if address:
+            return address
+    return listing_from_contact(contact)
 
 
 async def ensure_first_touch_draft(
@@ -289,7 +307,7 @@ async def ensure_first_touch_draft(
 
     check = await (
         db.table("Contact")
-        .select("id,name,phone,address,properties,applicationData")
+        .select("id,name,phone,address,preferences,properties,applicationData")
         .eq("id", contact_id)
         .eq("spaceId", space_id)
         .maybe_single()
@@ -380,7 +398,7 @@ async def ensure_first_touch_draft(
         agent_first_name=agent_name,
         tone=normalize_tone(profile.get("communicationTone")),
         windows=windows,
-        property_name=_property_from_contact(contact),
+        property_name=listing_from_contact(contact),
         business_name=business,
     )
 

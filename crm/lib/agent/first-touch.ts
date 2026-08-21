@@ -320,23 +320,49 @@ export function assertValidFirstTouchText(
   }
 }
 
-function propertyFromContact(contact: {
+const LISTING_APPLICATION_KEYS = [
+  'propertyAddress',
+  'listingAddress',
+  'interestedProperty',
+] as const;
+
+export interface ListingContactFields {
   address?: string | null;
+  preferences?: string | null;
   properties?: string[] | null;
   applicationData?: unknown;
-}): string | undefined {
-  if (contact.address?.trim()) return contact.address.trim();
-  const listed = (contact.properties ?? []).find((p) => typeof p === 'string' && p.trim());
-  if (listed) return listed.trim();
+}
+
+/**
+ * The listing this SMS is about — never the lead's home / mailing address.
+ *
+ * Apply stores currentAddress on Contact.address and the listing on
+ * Contact.preferences + applicationData.propertyAddress. Using address
+ * first attached the wrong property to outbound texts.
+ */
+export function listingFromContact(contact: ListingContactFields): string | undefined {
   const data = contact.applicationData;
   if (data && typeof data === 'object') {
     const rec = data as Record<string, unknown>;
-    for (const key of ['address', 'propertyAddress', 'listingAddress', 'property', 'interestedProperty']) {
+    for (const key of LISTING_APPLICATION_KEYS) {
       const value = rec[key];
       if (typeof value === 'string' && value.trim()) return value.trim();
     }
   }
+  const pref = contact.preferences?.trim();
+  if (pref) return pref;
+  const listed = (contact.properties ?? []).find((p) => typeof p === 'string' && p.trim());
+  if (listed) return listed.trim();
   return undefined;
+}
+
+export function listingFromTourOrContact(
+  tour: { propertyAddress?: string | null } | null,
+  contact: ListingContactFields,
+): string | undefined {
+  const fromTour = tour?.propertyAddress?.trim();
+  if (fromTour) return fromTour;
+  return listingFromContact(contact);
 }
 
 export async function draftFirstTouchForLead(
@@ -349,7 +375,7 @@ export async function draftFirstTouchForLead(
   const now = input.now ?? new Date();
   const { data: contact, error: contactError } = await supabase
     .from('Contact')
-    .select('id,name,phone,address,properties,applicationData,spaceId')
+    .select('id,name,phone,address,preferences,properties,applicationData,spaceId')
     .eq('id', input.contactId)
     .eq('spaceId', input.spaceId)
     .maybeSingle();
@@ -435,7 +461,7 @@ export async function draftFirstTouchForLead(
     contactFirstName: firstNameOf(contact.name, 'there'),
     voice,
     windows,
-    property: propertyFromContact(contact),
+    property: listingFromContact(contact),
   });
   const windowLabels = windows.map((w) => w.label);
 

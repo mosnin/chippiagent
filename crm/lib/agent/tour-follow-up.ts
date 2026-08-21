@@ -14,6 +14,7 @@ import { supabase } from '@/lib/supabase';
 import { logger } from '@/lib/logger';
 import {
   firstNameOf,
+  listingFromTourOrContact,
   normalizeTone,
   sendAutonomousSms,
   type AgentTone,
@@ -153,29 +154,6 @@ function skipped(contactId: string, reason: string): TourFollowUpDraftResult {
   };
 }
 
-function propertyFromTourOrContact(
-  tour: { propertyAddress?: string | null } | null,
-  contact: {
-    address?: string | null;
-    properties?: string[] | null;
-    applicationData?: unknown;
-  },
-): string | undefined {
-  if (tour?.propertyAddress?.trim()) return tour.propertyAddress.trim();
-  if (contact.address?.trim()) return contact.address.trim();
-  const listed = (contact.properties ?? []).find((p) => typeof p === 'string' && p.trim());
-  if (listed) return listed.trim();
-  const data = contact.applicationData;
-  if (data && typeof data === 'object') {
-    const rec = data as Record<string, unknown>;
-    for (const key of ['address', 'propertyAddress', 'listingAddress', 'property', 'interestedProperty']) {
-      const value = rec[key];
-      if (typeof value === 'string' && value.trim()) return value.trim();
-    }
-  }
-  return undefined;
-}
-
 type DraftRow = {
   id: string;
   content: string | null;
@@ -195,7 +173,7 @@ export async function draftTourFollowUpForContact(
   const now = input.now ?? new Date();
   const { data: contact, error: contactError } = await supabase
     .from('Contact')
-    .select('id,name,phone,address,properties,applicationData,spaceId')
+    .select('id,name,phone,address,preferences,properties,applicationData,spaceId')
     .eq('id', input.contactId)
     .eq('spaceId', input.spaceId)
     .maybeSingle();
@@ -278,7 +256,7 @@ export async function draftTourFollowUpForContact(
   const content = composeTourFollowUpSms({
     contactFirstName: firstNameOf(contact.name, 'there'),
     voice,
-    property: propertyFromTourOrContact(tour, contact),
+    property: listingFromTourOrContact(tour, contact),
   });
   if (!content.trim()) {
     throw new Error('tour-follow-up draft is empty');

@@ -250,9 +250,13 @@ describe('draftTourFollowUpForContact', () => {
           id: 'c1',
           name: 'Sam Rivera',
           phone: '+15555550123',
-          address: '1422 Pine',
+          address: '55 Oak St Apt 2',
+          preferences: '400 West',
           properties: [],
-          applicationData: null,
+          applicationData: {
+            propertyAddress: '400 West',
+            currentAddress: '55 Oak St Apt 2',
+          },
           spaceId: 's1',
         },
       },
@@ -290,6 +294,9 @@ describe('draftTourFollowUpForContact', () => {
     expect(result.content.trim().length).toBeGreaterThan(0);
     expect(result.content).toContain('Jordan');
     expect(result.content).toContain('Sam');
+    expect(result.content).toContain('1422 Pine');
+    expect(result.content).not.toContain('55 Oak');
+    expect(result.content).not.toContain('400 West');
     expect(sendSMS).toHaveBeenCalledWith({
       to: '+15555550123',
       body: result.content,
@@ -396,6 +403,31 @@ describe('draftTourFollowUpForContact', () => {
     expect(updatedDraft?.content).toBe(result.content);
     expect(updatedDraft?.status).toBe('sent');
     expect(updatedDraft?.status).not.toBe('pending');
+  });
+
+  it('falls back to the applied listing when the tour has no address', async () => {
+    seedHappyPath();
+    tables.Tour = {
+      rows: [
+        {
+          id: 't1',
+          status: 'completed',
+          propertyAddress: null,
+          contactId: 'c1',
+          spaceId: 's1',
+          updatedAt: '2026-08-21T18:00:00.000Z',
+        },
+      ],
+    };
+    const result = await draftTourFollowUpForContact({
+      spaceId: 's1',
+      contactId: 'c1',
+      tourId: 't1',
+      now: new Date('2026-08-21T18:05:00Z'),
+    });
+    expect(result.sent).toBe(true);
+    expect(result.content).toContain('400 West');
+    expect(result.content).not.toContain('55 Oak');
   });
 
   it('distinguishes tour-follow-up drafts from first-touch', () => {
